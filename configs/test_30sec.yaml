@@ -1,0 +1,37 @@
+profile_name: test_30sec
+
+source:
+  path: tests/fixtures/test_clip_30sec.webm
+  sha256: null
+
+run:
+  output_root: runs/
+  stages_to_run: [s00, s01, s02]
+
+s00_ingest:
+  output_format: png
+  preserve_audio: false
+  parallel_workers: 2
+
+s01_probe:
+  shot_detection:
+    method: pyscenedetect
+    threshold: 27.0
+  damage_heuristics:
+    laplacian_blur_threshold: 100.0
+    dark_frame_threshold: 0.02
+  intertitle_detection:
+    enabled: true
+    method: east
+    model_path: models/frozen_east_text_detection.pb
+    min_confidence: 0.5
+    area_threshold: 0.08
+    resize_width: 640
+    resize_height: 384
+
+s02_stabilise:
+  method: python_vidstab
+  smoothing: 10
+  per_shot: true
+  crop: keep
+  skip_intertitles: true

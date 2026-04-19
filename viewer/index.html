@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Silent Film Restoration — Viewer</title>
+<style>
+  :root { --fg: #e8e8e8; --bg: #111; --accent: #f3b700; --muted: #777; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 13px/1.4 system-ui, sans-serif; }
+  header { padding: 8px 12px; background: #1a1a1a; display: flex; gap: 12px; align-items: center; border-bottom: 1px solid #2a2a2a; }
+  select { background: #222; color: var(--fg); border: 1px solid #333; padding: 4px 6px; }
+  .stages { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 8px; }
+  .pane { background: #000; border: 1px solid #222; display: flex; flex-direction: column; }
+  .pane h3 { margin: 0; padding: 6px 10px; color: var(--accent); font-size: 12px; background: #151515; border-bottom: 1px solid #222; }
+  .pane img { max-width: 100%; max-height: calc(100vh - 180px); display: block; margin: 0 auto; image-rendering: pixelated; }
+  .controls { padding: 10px; border-top: 1px solid #2a2a2a; display: flex; gap: 12px; align-items: center; background: #1a1a1a; position: sticky; bottom: 0; }
+  input[type=range] { flex: 1; }
+  .muted { color: var(--muted); }
+  kbd { background: #333; border-radius: 3px; padding: 1px 5px; font: 11px monospace; }
+</style>
+</head>
+<body>
+<header>
+  <span>Run: <select id="runSel"></select></span>
+  <span>Left: <select id="stageA"></select></span>
+  <span>Right: <select id="stageB"></select></span>
+  <span class="muted">Frame <span id="frameIdx">0</span> / <span id="frameTotal">0</span></span>
+  <span class="muted">Keys: <kbd>←</kbd> <kbd>→</kbd> step · <kbd>Shift+←/→</kbd> ×10</span>
+</header>
+<main class="stages">
+  <div class="pane"><h3 id="titleA">stage A</h3><img id="imgA" alt=""/></div>
+  <div class="pane"><h3 id="titleB">stage B</h3><img id="imgB" alt=""/></div>
+</main>
+<div class="controls">
+  <input id="scrub" type="range" min="0" max="0" value="0" />
+</div>
+<script src="/viewer/app.js"></script>
+</body>
+</html>
