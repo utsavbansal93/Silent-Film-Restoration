@@ -4,7 +4,8 @@
 
 set -euo pipefail
 
-URL="https://upload.wikimedia.org/wikipedia/commons/e/e6/Lanka_Dahan_%281917%29_by_Dadasaheb_Phalke.webm"
+URL="https://upload.wikimedia.org/wikipedia/commons/8/89/Lanka_Dahan_%281917%29_by_Dadasaheb_Phalke.webm"
+# Expected: ~212 MB, SHA1 676e6bf7cc5a3edab44cbc83c41e4676bda72f71 (from Wikimedia API)
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 DEST_DIR="${REPO_ROOT}/source"
 DEST="${DEST_DIR}/lanka_dahan_1917.webm"

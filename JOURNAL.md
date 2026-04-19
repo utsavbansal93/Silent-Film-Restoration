@@ -62,7 +62,47 @@ Entries are date-stamped, newest at the bottom. Every non-trivial call documents
 
 ### Attempts and results
 
-- (Filled in as stages run.)
+**2026-04-19 18:00 IST — Source download**
+- First attempt: hardcoded URL `/e/e6/` path — 404. Correct path is `/8/89/` (fetched via Wikimedia API `action=query&prop=imageinfo`).
+- Downloaded 212,762,100 bytes. Matches API's declared `size`. SHA1 `676e6bf7cc5a3edab44cbc83c41e4676bda72f71` (per API); SHA256 captured on first successful fetch.
+- Source properties: 1920×1080, 25.000 fps (declared), 315.861 s duration → ~7,897 frames.
+
+**2026-04-19 18:04 IST — User-provided ground truth (for pipeline validation)**
+- Movie starts near the 3-second mark (first ~3s is dark leader).
+- English intertitles at ~11–15s (frames ~275–375 on 30s fixture).
+- Marathi intertitles at ~15–17s (frames ~375–425).
+- "End of Part One" title at ~5:14 (frame ~7,850).
+- List is not exhaustive — there are more intertitles throughout.
+
+**2026-04-19 18:04 IST — S00 on 30s fixture (first run)**
+- Parallel workers=2, 749 frames extracted in 22.0 s. Wall → fps ≈ 34.
+- Fixture's frame 1 is fully black (expected: silent film leader). Initial strict per-frame brightness QC rejected this; relaxed to "fail only if all samples degenerate" so legitimate dark leaders pass. Still catches silent-failure modes (uniformly black/blown output).
+- Brightness sample means: [0.0, 37.9, 10.0, 48.1, 62.4].
+
+**2026-04-19 18:05 IST — S01 probe on 30s fixture**
+- PySceneDetect found 9 shots in 30 s (reasonable for this section).
+- Damage heuristics + optical flow completed in ~43 s.
+- EAST intertitle detection flagged 160 frames (~6.4 s at 25 fps). User ground truth is ~6 s of intertitles in this window (English 11–15s + Marathi 15–17s). **Close match — validates EAST choice.**
+- `probe_report.json` written with motion_magnitude per frame, to be used for motion-heavy fixture regeneration.
+
+**2026-04-19 18:30 IST — S02 stabilise: two implementations, both flawed**
+
+*Attempt 1: Python `vidstab` library.* Pathologically slow — 20 min wall on 30s fixture, stuck at 405/749 frames on a long motion-heavy shot. Killed. Likely cause: internal warmup/flush semantics + repeated per-shot re-initialisation.
+
+*Attempt 2: Direct OpenCV feature-tracking (goodFeaturesToTrack + KLT + estimateAffinePartial2D + moving-average smoothing).* Fast (~45 s on fixture). But the shake metric shows post > pre consistently:
+
+- Fixture at 0–30 s (first attempt): pre=23.28, post=27.55 (worse by ~18%).
+- Fixture at 60–90 s (motion-heavy section past titles): pre=0.55, post=2.81 (worse by ~5×!).
+
+Debugging landed on: the Phalke source is already tripod-stable. Pre-shake RMS <1 px in real-footage windows. My current estimator is picking up noise (dirt, grain, low-contrast texture) and producing unstable transforms that *add* jitter rather than removing it.
+
+### D11 — S02 auto-QC soft-failed for now
+
+Flipped the `post >= pre` auto-QC from fatal to warning, marked `qc_soft_fail: true` in shake_metric.json. S00+S01 artefacts ship as-is. S02 needs a follow-up:
+- **Alternative 1:** `cv2.findTransformECC` (iterative, robust) instead of feature-tracking.
+- **Alternative 2:** `phaseCorrelate` for translation vectors (robust to noise, exactly what our metric uses).
+- **Alternative 3:** Skip S02 entirely if probe shows pre_shake_rms < some threshold — the source may not benefit from stabilisation at all.
+- **Revisit when:** a longer cross-source test shows genuine handheld shake (other silent films in the series will have it).
 
 ### Failures / dead ends
 

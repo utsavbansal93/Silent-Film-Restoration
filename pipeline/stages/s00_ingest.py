@@ -142,19 +142,27 @@ def auto_qc(frames_dir: Path, metadata: dict, logger) -> None:
             raise RuntimeError(
                 f"S00 auto-QC: frame count {len(frames)} diverges from declared {expected}"
             )
-    # Spot brightness: sample 5 frames, require mean in [5, 250].
+    # Spot brightness: sample 5 frames. Silent films legitimately have near-black
+    # leader/dark frames, so only fail if *all* samples are degenerate (catches
+    # silent-failure modes like uniformly black output, not a legit dark leader).
     try:
         from PIL import Image
         import numpy as np
 
         sample_idxs = [0, len(frames) // 4, len(frames) // 2, 3 * len(frames) // 4, len(frames) - 1]
+        means = []
         for i in sample_idxs:
             arr = np.asarray(Image.open(frames[i]).convert("L"))
-            m = float(arr.mean())
-            if m < 5 or m > 250:
-                raise RuntimeError(
-                    f"S00 auto-QC: frame {frames[i].name} brightness out of range ({m:.1f})"
-                )
+            means.append(float(arr.mean()))
+        if all(m < 5 for m in means):
+            raise RuntimeError(
+                f"S00 auto-QC: all sampled frames near-black (means={means}) — likely silent failure"
+            )
+        if all(m > 250 for m in means):
+            raise RuntimeError(
+                f"S00 auto-QC: all sampled frames blown out (means={means}) — likely silent failure"
+            )
+        logger.info("Brightness sample means: %s", [round(m, 1) for m in means])
     except ImportError:
         logger.warning("PIL/numpy not available; skipping brightness QC")
 
