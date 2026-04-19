@@ -59,7 +59,34 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def _list_runs(self):
-        return sorted([d.name for d in runs_dir().iterdir() if d.is_dir()], reverse=True)
+        runs = []
+        for d in sorted(runs_dir().iterdir(), reverse=True):
+            if not d.is_dir():
+                continue
+            # Friendly label: "1 Apr 19, 19:03 — test_30sec"
+            # from run dirname "2026-04-19_190311_test_30sec"
+            parts = d.name.split("_", 2)
+            if len(parts) == 3:
+                date, hms, profile = parts
+                pretty_time = f"{hms[:2]}:{hms[2:4]}:{hms[4:6]}" if len(hms) == 6 else hms
+                label = f"{date} {pretty_time} — {profile}"
+            else:
+                label = d.name
+            runs.append({"name": d.name, "label": label})
+        return runs
+
+    _STAGE_LABELS = {
+        "s00_ingest": "S00 — Raw (ingested)",
+        "s02_stabilise": "S02 — Stabilised (weave-removed)",
+        "s03_deflicker": "S03 — Deflickered",
+        "s05_dirt_remove": "S05 — Dirt removed",
+        "s08_denoise": "S08 — Denoised",
+        "s10_interpolate": "S10 — Interpolated (24 fps)",
+        "s11_upscale": "S11 — Upscaled",
+        "s12_face_restore": "S12 — Faces restored",
+        "s14_grain_add": "S14 — Grain re-added",
+        "s15_grade": "S15 — Graded",
+    }
 
     def _list_stages(self, run_name: str):
         run = runs_dir() / run_name
@@ -69,10 +96,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         for d in sorted(run.iterdir()):
             if not d.is_dir():
                 continue
-            # Prefer the frames subdir for display.
-            for sub in ("frames_raw", "frames_stabilised"):
+            for sub in ("frames_raw", "frames_stabilised", "frames_deflickered",
+                        "frames_cleaned", "frames_inpainted", "frames_kept",
+                        "frames_denoised", "frames_retimed", "frames_24fps",
+                        "frames_upscaled", "frames_faces", "frames_sharpened",
+                        "frames_final", "frames_graded", "frames_with_titles"):
                 if (d / sub).is_dir():
-                    stages.append({"id": d.name, "frames_path": f"{d.name}/{sub}"})
+                    stages.append({
+                        "id": d.name,
+                        "frames_path": f"{d.name}/{sub}",
+                        "label": self._STAGE_LABELS.get(d.name, d.name),
+                    })
                     break
         return stages
 

@@ -30,8 +30,9 @@ s01_probe:
     resize_height: 384
 
 s02_stabilise:
-  method: python_vidstab
-  smoothing: 10
+  method: skimage_phase_corr
+  smoothing: 25
+  upsample_factor: 10
   per_shot: true
   crop: keep
   skip_intertitles: true

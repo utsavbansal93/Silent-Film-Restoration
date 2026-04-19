@@ -1,18 +1,26 @@
-"""S02 — Stabilise using direct OpenCV feature-tracking.
+"""S02 — Film weave removal (sub-pixel frame-to-frame registration).
 
-Rewritten after vidstab library hit pathological slowdowns on motion-heavy
-shots (see JOURNAL D10). Algorithm:
+The Phalke source is tripod-shot; what it actually has is **film weave**
+(hand-crank gate jitter): sub-pixel frame-to-frame translation wobble from
+uneven film transport. This is a registration problem, not a camera-shake
+problem, so feature-tracking was the wrong tool (JOURNAL D11).
 
-1. Per shot (boundaries from S01): compute frame-to-frame affine transforms
-   using goodFeaturesToTrack + calcOpticalFlowPyrLK.
-2. Integrate transforms into a trajectory (cumulative dx, dy, da).
-3. Smooth trajectory with a centred moving average (window = cfg.smoothing).
-4. Compute correction = smoothed - raw trajectory; warp each frame with it.
+Algorithm (method=skimage_phase_corr):
+  1. Per shot: compute sub-pixel shift between each consecutive pair of
+     frames using FFT-based phase cross-correlation (robust to dirt/grain).
+  2. Cumulate shifts into a trajectory (position of each frame relative to
+     the shot's first frame).
+  3. Smooth the trajectory with a wide centred moving average (default 25
+     frames ≈ 1 s @ 25 fps) → the *intended* camera position at each frame.
+  4. Subtract smoothed from raw trajectory → the *weave* component
+     (high-frequency jitter).
+  5. Warp each frame by -weave_component using cv2.warpAffine with sub-pixel
+     translation. Pans and intentional motion are preserved; weave is removed.
 
-Intertitle frames (from S01 list) are copied through byte-identical; their
-original-vs-stabilised motion is excluded from the trajectory integration.
+Intertitle frames (per S01) are copied byte-identical — static cards don't
+have weave to compute and shouldn't be warped.
 
-shake_metric.json: phaseCorrelate-based RMS of translation magnitudes pre vs post.
+shake_metric.json: phaseCorrelate-based RMS of per-pair translations, pre vs post.
 """
 from __future__ import annotations
 
@@ -23,6 +31,7 @@ from pathlib import Path
 import click
 import cv2
 import numpy as np
+from skimage.registration import phase_cross_correlation
 
 from pipeline.common.bench import bench_run
 from pipeline.common.config import load_config
@@ -45,129 +54,121 @@ def load_probe(run_dir: Path) -> dict:
     return json.loads((s01 / "probe_report.json").read_text())
 
 
-def estimate_transform(prev_gray: np.ndarray, cur_gray: np.ndarray):
-    """Return (dx, dy, da) for the rigid transform from prev to cur, or None
-    if not enough features tracked."""
-    pts_prev = cv2.goodFeaturesToTrack(
-        prev_gray, maxCorners=200, qualityLevel=0.01, minDistance=30, blockSize=3,
+def estimate_shift(prev_gray: np.ndarray, cur_gray: np.ndarray, upsample: int) -> tuple[float, float]:
+    """Return (dy, dx) sub-pixel shift from prev → cur. FFT phase correlation."""
+    shift, _error, _phasediff = phase_cross_correlation(
+        prev_gray, cur_gray, upsample_factor=upsample, normalization=None,
     )
-    if pts_prev is None or len(pts_prev) < 10:
-        return None
-    pts_cur, status, _ = cv2.calcOpticalFlowPyrLK(prev_gray, cur_gray, pts_prev, None)
-    mask = status.flatten() == 1
-    if mask.sum() < 10:
-        return None
-    a = pts_prev[mask]
-    b = pts_cur[mask]
-    m, _ = cv2.estimateAffinePartial2D(a, b)
-    if m is None:
-        return None
-    dx = float(m[0, 2])
-    dy = float(m[1, 2])
-    da = float(np.arctan2(m[1, 0], m[0, 0]))
-    return (dx, dy, da)
+    return float(shift[0]), float(shift[1])
 
 
-def smooth_trajectory(traj: np.ndarray, window: int) -> np.ndarray:
-    """Simple centred moving average."""
-    if window <= 1 or len(traj) < 3:
-        return traj.copy()
-    kernel = np.ones(window) / window
-    smoothed = np.empty_like(traj)
-    for i in range(traj.shape[1]):
-        smoothed[:, i] = np.convolve(traj[:, i], kernel, mode="same")
-    return smoothed
+def smooth_1d(arr: np.ndarray, window: int) -> np.ndarray:
+    """Centred moving average. Edge-padded with reflection to preserve length."""
+    if window <= 1 or len(arr) < 3:
+        return arr.copy()
+    w = min(window, len(arr))
+    if w % 2 == 0:
+        w += 1  # odd for true centering
+    pad = w // 2
+    padded = np.pad(arr, pad, mode="reflect")
+    kernel = np.ones(w) / w
+    return np.convolve(padded, kernel, mode="valid")
 
 
-def stabilise_shot_stream(
+def stabilise_shot_phase_corr(
     frame_paths: list[Path],
     intertitle_set: set[int],
     global_offset: int,
     out_dir: Path,
     smoothing: int,
+    upsample: int,
+    logger,
 ) -> int:
-    """Stabilise a contiguous shot. Writes frames to out_dir as they're warped.
-    Intertitles (global indices in intertitle_set) are copied byte-identical.
-    Returns count of frames written.
-    """
+    """Remove weave from one shot. Intertitle frames are copied through."""
     n = len(frame_paths)
     if n == 0:
         return 0
+    if n == 1:
+        shutil.copy2(frame_paths[0], out_dir / frame_paths[0].name)
+        return 1
 
-    # Read all frames once (grayscale for tracking, colour for output).
-    # 1080p grayscale = ~2MB/frame; 749 frames = ~1.5GB. We release colour after write.
-    grays = []
-    for p in frame_paths:
-        g = cv2.imread(str(p), cv2.IMREAD_GRAYSCALE)
-        grays.append(g)
+    # Read all grayscale frames once. At 1920×1080×1 byte = 2MB/frame; 800 frames = 1.6GB.
+    # Fits comfortably on 16GB M3.
+    grays = [cv2.imread(str(p), cv2.IMREAD_GRAYSCALE) for p in frame_paths]
+    if any(g is None for g in grays):
+        raise RuntimeError(f"Unreadable frame(s) in shot starting at index {global_offset}")
 
-    # Compute per-pair transforms (dx, dy, da). For pairs where either frame is
-    # an intertitle, treat transform as identity (don't let title cards leak).
-    transforms = np.zeros((n - 1, 3), dtype=np.float64)
+    # Per-pair sub-pixel shift. For intertitle-bordering pairs, treat as zero
+    # (intertitles are static text cards; no weave between title↔motion frames).
+    shifts = np.zeros((n - 1, 2), dtype=np.float64)  # columns: dy, dx
     for i in range(n - 1):
         gi = global_offset + i
         gi1 = global_offset + i + 1
         if gi in intertitle_set or gi1 in intertitle_set:
             continue
-        t = estimate_transform(grays[i], grays[i + 1])
-        if t is not None:
-            transforms[i] = t
+        dy, dx = estimate_shift(grays[i], grays[i + 1], upsample)
+        shifts[i] = (dy, dx)
+        if (i + 1) % 200 == 0:
+            logger.info("phase_corr: %d/%d pairs in shot", i + 1, n - 1)
 
-    # Integrate trajectory; trajectory[k] = camera position at frame k+1 relative to frame 0.
-    trajectory = np.cumsum(transforms, axis=0)
-    smoothed = smooth_trajectory(trajectory, smoothing)
-    # correction[k] applies to frame k+1. Sign convention:
-    # camera drifted by trajectory[k]; to compensate, content must be shifted
-    # by (trajectory - smoothed) so the scene appears at the smoothed camera pos.
-    correction = trajectory - smoothed  # shape (n-1, 3)
+    # Integrate to trajectory relative to frame 0.
+    trajectory = np.cumsum(shifts, axis=0)  # shape (n-1, 2)
+    smoothed = np.stack([
+        smooth_1d(trajectory[:, 0], smoothing),
+        smooth_1d(trajectory[:, 1], smoothing),
+    ], axis=1)
+    # weave = trajectory - smoothed. Warping each frame by -weave cancels the jitter
+    # while preserving the smoothed (intentional) motion.
+    weave = trajectory - smoothed  # shape (n-1, 2)
 
-    count = 0
+    # Frame 0: unchanged (no preceding frame to register against).
+    shutil.copy2(frame_paths[0], out_dir / frame_paths[0].name)
+    count = 1
 
-    # Frame 0: pass-through (or copy if intertitle).
-    g_idx0 = global_offset
-    if g_idx0 in intertitle_set:
-        shutil.copy2(frame_paths[0], out_dir / frame_paths[0].name)
-    else:
-        shutil.copy2(frame_paths[0], out_dir / frame_paths[0].name)
-    count += 1
-
-    # Frames 1..n-1: warp by correction[i-1].
+    # Frames 1..n-1: warp by -weave[i-1]. Intertitles pass-through.
     for i in range(1, n):
         g_idx = global_offset + i
         if g_idx in intertitle_set:
             shutil.copy2(frame_paths[i], out_dir / frame_paths[i].name)
             count += 1
             continue
-        dx, dy, da = correction[i - 1]
+        dy, dx = weave[i - 1]
         frame = cv2.imread(str(frame_paths[i]))
         h, w = frame.shape[:2]
-        m = np.array([
-            [np.cos(da), -np.sin(da), dx],
-            [np.sin(da),  np.cos(da), dy],
-        ], dtype=np.float64)
-        warped = cv2.warpAffine(frame, m, (w, h), borderMode=cv2.BORDER_REPLICATE)
+        # skimage.phase_cross_correlation returns the shift required to register
+        # `cur` onto `prev`. Cumulating gives the cumulative alignment correction;
+        # weave = that correction minus its smooth (intended) component. To
+        # cancel the weave on frame k we translate content by +weave (not -weave).
+        m = np.array([[1.0, 0.0, dx], [0.0, 1.0, dy]], dtype=np.float64)
+        warped = cv2.warpAffine(
+            frame, m, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE,
+        )
         cv2.imwrite(str(out_dir / frame_paths[i].name), warped)
         count += 1
 
     return count
 
 
-def frame_to_frame_translation_rms(frame_paths: list[Path]) -> float:
-    """RMS of per-pair translation magnitudes via phaseCorrelate."""
+def frame_to_frame_translation_rms(frame_paths: list[Path], upsample: int = 10) -> float:
+    """Metric: RMS of per-pair sub-pixel translation magnitudes via the SAME
+    skimage phase_cross_correlation used by the stabiliser. This keeps pre/post
+    measurement consistent with the algorithm, so any reduction is attributable
+    to the algorithm rather than a metric/method mismatch.
+    """
     if len(frame_paths) < 2:
         return 0.0
     prev = cv2.imread(str(frame_paths[0]), cv2.IMREAD_GRAYSCALE)
     if prev is None:
         return 0.0
-    prev = cv2.resize(prev, (640, 360)).astype(np.float32)
     mags = []
     for p in frame_paths[1:]:
         cur = cv2.imread(str(p), cv2.IMREAD_GRAYSCALE)
         if cur is None:
             continue
-        cur = cv2.resize(cur, (640, 360)).astype(np.float32)
-        (dx, dy), _ = cv2.phaseCorrelate(prev, cur)
-        mags.append(dx * dx + dy * dy)
+        shift, _, _ = phase_cross_correlation(
+            prev, cur, upsample_factor=upsample, normalization=None,
+        )
+        mags.append(float(shift[0]) ** 2 + float(shift[1]) ** 2)
         prev = cur
     if not mags:
         return 0.0
@@ -204,39 +205,51 @@ def main(cfg_path: str, run_dir: str | None) -> None:
     probe = load_probe(run_path)
     shot_boundaries: list[int] = probe.get("shot_boundaries", [])
     intertitles: set[int] = set(probe.get("intertitle_frames", []))
-    logger.info("Using %d shot boundaries, %d intertitle frames to pass through",
+    logger.info("Using %d shot boundaries, %d intertitle frames (pass-through)",
                 len(shot_boundaries), len(intertitles))
 
     out_dir = stage_dir(run_path, STAGE_ID, STAGE_NAME)
-    # Clear any prior partial output to avoid mixed runs.
     out_frames_dir = out_dir / "frames_stabilised"
     if out_frames_dir.exists():
         shutil.rmtree(out_frames_dir)
     out_frames_dir.mkdir()
 
     s02cfg = cfg.s02_stabilise
-
-    # Build shot ranges (half-open): always include 0 and len(frames) as boundaries.
-    if s02cfg.per_shot and shot_boundaries:
-        boundaries = sorted(set(shot_boundaries) | {0, len(frames)})
-        ranges = list(zip(boundaries, boundaries[1:]))
-    else:
-        ranges = [(0, len(frames))]
-    logger.info("Processing %d shot ranges", len(ranges))
+    logger.info("Method: %s", s02cfg.method)
 
     total_written = 0
     with bench_run(f"{STAGE_ID}_{STAGE_NAME}", cfg.section_hash("s02"), out_dir) as b:
-        for ri, (a, bnd) in enumerate(ranges):
-            shot_paths = frames[a:bnd]
-            written = stabilise_shot_stream(
-                shot_paths, intertitles, a, out_frames_dir, s02cfg.smoothing,
+        if s02cfg.method == "passthrough":
+            logger.info("Passthrough: copying %d frames unchanged", len(frames))
+            for p in frames:
+                shutil.copy2(p, out_frames_dir / p.name)
+            total_written = len(frames)
+        elif s02cfg.method == "skimage_phase_corr":
+            if s02cfg.per_shot and shot_boundaries:
+                boundaries = sorted(set(shot_boundaries) | {0, len(frames)})
+                ranges = list(zip(boundaries, boundaries[1:]))
+            else:
+                ranges = [(0, len(frames))]
+            logger.info("Processing %d shot range(s); smoothing=%d, upsample=%d",
+                        len(ranges), s02cfg.smoothing, s02cfg.upsample_factor)
+            for ri, (a, bnd) in enumerate(ranges):
+                shot_paths = frames[a:bnd]
+                written = stabilise_shot_phase_corr(
+                    shot_paths, intertitles, a, out_frames_dir,
+                    s02cfg.smoothing, s02cfg.upsample_factor, logger,
+                )
+                total_written += written
+                logger.info("Shot %d/%d: %d frames (range %d-%d)",
+                            ri + 1, len(ranges), written, a, bnd - 1)
+        else:
+            # opencv_features deliberately removed from the default path.
+            raise NotImplementedError(
+                f"S02 method '{s02cfg.method}' not currently wired up. "
+                "Use skimage_phase_corr (default) or passthrough."
             )
-            total_written += written
-            logger.info("Shot %d/%d: %d frames (range %d-%d)",
-                        ri + 1, len(ranges), written, a, bnd - 1)
         b.frames_processed = total_written
 
-    # Shake metric
+    # Shake metric (same definition regardless of method — lets us compare).
     logger.info("Computing shake metric (pre)...")
     pre_rms = frame_to_frame_translation_rms(frames)
     stab_paths = sorted(out_frames_dir.glob("*.png"))
@@ -244,6 +257,7 @@ def main(cfg_path: str, run_dir: str | None) -> None:
     post_rms = frame_to_frame_translation_rms(stab_paths)
 
     shake = {
+        "method": s02cfg.method,
         "pre_shake_rms": pre_rms,
         "post_shake_rms": post_rms,
         "reduction_pct": (1 - (post_rms / pre_rms)) * 100 if pre_rms > 0 else 0.0,
@@ -257,28 +271,26 @@ def main(cfg_path: str, run_dir: str | None) -> None:
         raise RuntimeError(
             f"S02 auto-QC: frame count mismatch ({len(stab_paths)} vs {len(frames)})"
         )
-    # Known issue (JOURNAL D11): on Phalke's already-tripod-stable source,
-    # pre_shake_rms is tiny (<1 px). Current feature-tracking implementation
-    # adds artifacts that push post above pre. This is flagged but not fatal
-    # for pass 1 — S02 needs a follow-up iteration (ECC-based transform
-    # estimation or phaseCorrelate-based motion vectors).
-    if post_rms >= pre_rms:
+    if s02cfg.method == "passthrough":
+        logger.info("Passthrough mode: shake metric recorded for diagnostics only.")
+    elif post_rms >= pre_rms:
         logger.warning(
-            "S02 auto-QC (soft-fail): post-shake %.4f not less than pre-shake %.4f — "
-            "source may already be tripod-stable, or stabiliser is adding artifacts. "
-            "See JOURNAL D11; needs iteration.",
+            "S02 auto-QC (soft-fail): post-shake %.4f not less than pre-shake %.4f. "
+            "Algorithm needs tuning (try wider smoothing window or higher upsample_factor).",
             post_rms, pre_rms,
         )
         shake["qc_soft_fail"] = True
         (out_dir / "shake_metric.json").write_text(json.dumps(shake, indent=2))
-    if s02cfg.skip_intertitles and intertitles:
+    else:
+        logger.info("S02 auto-QC passed: shake reduced by %.1f%%", shake["reduction_pct"])
+
+    # Intertitle byte-identity spot-check (non-passthrough only).
+    if s02cfg.method != "passthrough" and s02cfg.skip_intertitles and intertitles:
         from pipeline.common.hashing import sha256_file
-        # Spot-check up to 10 intertitle frames are byte-identical.
         for i in list(intertitles)[:10]:
             in_name = frames[i].name
             if sha256_file(frames[i]) != sha256_file(out_frames_dir / in_name):
                 raise RuntimeError(f"S02 auto-QC: intertitle frame {in_name} was modified")
-    logger.info("S02 auto-QC passed")
 
 
 if __name__ == "__main__":

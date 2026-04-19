@@ -55,11 +55,18 @@ class S01Cfg(BaseModel):
 
 
 class S02Cfg(BaseModel):
-    method: Literal["python_vidstab"] = "python_vidstab"
-    smoothing: int = Field(default=10, ge=1, le=100)
+    # skimage_phase_corr: FFT-based sub-pixel frame-to-frame alignment.
+    #   Designed for film weave (hand-crank gate jitter). Robust to dirt/grain.
+    # opencv_features: feature-tracking (broken on tripod-stable film-weave sources).
+    # passthrough: copy frames unchanged; downstream stages proceed as if S02 is a no-op.
+    method: Literal["skimage_phase_corr", "opencv_features", "passthrough"] = "skimage_phase_corr"
+    # Wide smoothing window for weave removal: weave is high-freq jitter; genuine
+    # pans/motion are multi-second low-freq. Wide window separates them well.
+    smoothing: int = Field(default=25, ge=3, le=200)
+    # Sub-pixel upsampling for phase_cross_correlation. 10 → 0.1 px precision.
+    upsample_factor: int = Field(default=10, ge=1, le=100)
     per_shot: bool = True
     crop: Literal["keep", "zoom"] = "keep"
-    # Skip intertitle frames (pass through unchanged).
     skip_intertitles: bool = True
 
 

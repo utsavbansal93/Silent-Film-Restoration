@@ -10,15 +10,15 @@ async function api(path) {
 async function loadRuns() {
   const runs = await api("/api/runs");
   const sel = $("runSel");
-  sel.innerHTML = runs.map(r => `<option>${r}</option>`).join("");
-  state.run = runs[0];
+  sel.innerHTML = runs.map(r => `<option value="${r.name}">${r.label}</option>`).join("");
+  state.run = runs[0]?.name;
   sel.onchange = () => { state.run = sel.value; loadStages(); };
   if (state.run) loadStages();
 }
 
 async function loadStages() {
   const stages = await api(`/api/stages/${encodeURIComponent(state.run)}`);
-  const opts = stages.map(s => `<option value="${s.frames_path}">${s.id}</option>`).join("");
+  const opts = stages.map(s => `<option value="${s.frames_path}">${s.label || s.id}</option>`).join("");
   $("stageA").innerHTML = opts;
   $("stageB").innerHTML = opts;
   if (stages.length) {
@@ -32,11 +32,13 @@ async function loadStages() {
 }
 
 async function refreshPane(which) {
-  const stagePath = $("stage" + which).value;
+  const sel = $("stage" + which);
+  const stagePath = sel.value;
+  const label = sel.options[sel.selectedIndex]?.textContent || stagePath;
   const frames = await api(`/api/frames/${encodeURIComponent(state.run)}/${stagePath}`);
   state["frames" + which] = frames;
   state["stage" + which] = stagePath;
-  $("title" + which).textContent = stagePath;
+  $("title" + which).textContent = label;
   const total = Math.min(state.framesA.length, state.framesB.length);
   $("scrub").max = Math.max(0, total - 1);
   $("frameTotal").textContent = total;

@@ -30,8 +30,11 @@ s01_probe:
     resize_height: 384
 
 s02_stabilise:
-  method: python_vidstab
-  smoothing: 10
+  # skimage_phase_corr = FFT sub-pixel registration for film-weave removal.
+  # Set to `passthrough` to bypass stabilisation entirely.
+  method: skimage_phase_corr
+  smoothing: 25         # wide window: weave = high-freq, pans = low-freq
+  upsample_factor: 10   # 0.1 px precision
   per_shot: true
   crop: keep
   skip_intertitles: true

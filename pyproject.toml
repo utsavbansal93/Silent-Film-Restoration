@@ -19,6 +19,7 @@ dependencies = [
     "ffmpeg-python>=0.2",
     "opencv-python-headless>=4.8",
     "scenedetect[opencv]>=0.6.3",
+    "scikit-image>=0.22",
     "vidstab>=1.7.4",
     "tqdm>=4.66",
     "psutil>=5.9",

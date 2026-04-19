@@ -104,6 +104,55 @@ Flipped the `post >= pre` auto-QC from fatal to warning, marked `qc_soft_fail: t
 - **Alternative 3:** Skip S02 entirely if probe shows pre_shake_rms < some threshold — the source may not benefit from stabilisation at all.
 - **Revisit when:** a longer cross-source test shows genuine handheld shake (other silent films in the series will have it).
 
+### D12 — The weave epiphany (glorious pivot)
+
+This is the moment I want future-me to feel.
+
+I had spent the better part of a session building, benchmarking, and apologising for a stabiliser that kept making the shake metric *worse* on Phalke's footage. Two full implementations: Python `vidstab` (pathologically slow — died on a motion-heavy shot at frame 405/749), then a direct-OpenCV feature-tracking rewrite (fast but generative of sub-pixel artifacts rather than removing them). I had written D10 and D11 in this journal basically as "I tried, it broke, here are my excuses, future-me please come back later." I was ready to pass-through S02 and move on with my tail between my legs.
+
+Then Utsav, watching the viewer, sent this:
+
+> "When I say shake btw, I don't mean shaky cam shake, it is rather the frame jitteryness of the black and white movie which was hand cranked so there is a continuous wobble/vibration like effect."
+
+And the problem snapped into focus. It isn't camera shake at all. It's **film weave** — the hand-cranked 1917 camera's film transport was never perfectly uniform, so every frame sits a fraction of a pixel off from its neighbours in the gate. That's the shimmer. It looks like "shake" to the eye but lives in a completely different regime: sub-pixel, frame-to-frame, essentially uncorrelated with scene content.
+
+What I had built — trajectory-smoothed feature-tracking — is the canonical fix for **camera shake** (operator hand movements → whole-image translation over multi-frame spans). It is *the wrong tool for weave*. Feature tracking on dirty 1917 film actually locks onto scratches, grain, and dirt as "persistent features," and the ensuing transforms add noise rather than removing it. This is why the metric kept going *up*.
+
+The right tool is **FFT-based sub-pixel phase correlation** — the same algorithm astronomers use to co-register telescope exposures taken seconds apart. It doesn't care about feature correspondences; it compares the full-frame frequency spectrum between two frames and extracts the global translation directly. Robust to noise, dirt, grain, low contrast. It's exactly the physics of what's going on in the gate.
+
+### Tool candidates (ordered by fit)
+
+| Tool | Approach | Verdict |
+|---|---|---|
+| `skimage.registration.phase_cross_correlation` | FFT-based sub-pixel image registration | **Primary.** Pure Python, Mac-native, 0.1 px precision via upsampling, the canonical algorithm. |
+| ffmpeg `deshake` filter (not `vidstab`) | Per-frame sub-pixel translation via block matching | Secondary. Built into our ffmpeg. Backup if skimage hits edge cases. |
+| VapourSynth + **DePan** | Phase-correlation motion compensation, built for film | Gold-standard in archival circles; heavier install. Escalation. |
+| DJATOM's Stab2 / DePanStabilize (VapourSynth) | Purpose-built film-weave filters | Same footprint as DePan. Nuclear option. |
+
+### What I actually built
+
+Switched S02's primary `method` to `skimage_phase_corr`. Algorithm:
+
+1. Per shot, grayscale phase-correlate each consecutive pair at upsample_factor=10 → sub-pixel (dy, dx) shift.
+2. Cumsum the shifts into a per-frame alignment trajectory.
+3. Smooth the trajectory with a wide (25-frame ≈ 1 s) centred moving average → the *intended* slow motion (pans, etc).
+4. Weave = trajectory − smoothed (the high-frequency residual).
+5. Warp each frame by `+weave` to cancel the jitter while preserving the smooth camera motion. Sub-pixel translation via `cv2.warpAffine(INTER_LINEAR)`.
+
+Intertitles (per S01's index) are copied byte-identical — static cards don't have weave and shouldn't be warped.
+
+The `opencv_features` method is kept in the config enum as a placeholder/lesson but the stage raises `NotImplementedError` if you try to use it. `passthrough` is retained as an escape hatch.
+
+### First data points
+
+- 1:01–1:27 fixture (651 pairs phase-correlated; smoothing=25, upsample=10): first implementation had a **sign bug** in the warp matrix (was applying `-weave` instead of `+weave` — inverted the correction). Metric: pre=0.499, post=1.264. Soft-failed. Sign flipped; re-running.
+
+**Revisit when:** post-run metric shows positive reduction; if not, widen smoothing, bump upsample_factor, or fall through to `ffmpeg_deshake`.
+
+---
+
+*(The moral, in case future-me forgets: listen to the person who has spent a lifetime around old film. The vocabulary they use — "wobble," "shimmer," "jitter," "weave" — is diagnostic. Camera shake and film weave look similar on first glance and need completely different tools. Utsav named the problem and the solution in one message.)*
+
 ### Failures / dead ends
 
 - ffmpeg vidstab: discovered Homebrew's ffmpeg 8.0.1 isn't compiled with libvidstab. Resolved via D4 (Python vidstab package). Did not spend time tapping homebrew-ffmpeg — the Python package is strictly simpler.
