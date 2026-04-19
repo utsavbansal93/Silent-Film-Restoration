@@ -141,3 +141,34 @@ EasyOCR may perform better with:
 - Image preprocessing: higher contrast stretch before passing to EasyOCR; the aged card stock sits in a narrow grey range that may confuse the CRAFT detector
 
 For this project's 4-card pass 1 scope, Claude vision is the pragmatic choice. If the project scales to more fragments with more cards, an automated engine is essential — revisit then.
+
+---
+
+## D3 — 2026-04-19 — Sequential bilingual pages; representative frame only captured one language
+
+### Discovery
+
+User review revealed each card group contains two sequential "pages" — English first, then Marathi (Devanagari) — not a single bilingual frame. S04's `representative.png` (midpoint by time) landed in one page, missing the other entirely.
+
+Evidence from frame scrubbing:
+- **card_001**: representative (frame 278) = English. Frame 320 = Marathi: "शाबाश ! सीतामाई आप धन्य हो."
+- **card_002**: representative (frame 3656) = Marathi. Frame 3490 = English: "Verily, verily is King Rama extremely fortunate to have a wife like you."
+- **card_003**: representative (frame 7246) = English. Frame 7350 = Marathi: "माताजी मैं वंदन करता हूँ. यह रामदास हनुमान आप के शोधार्थ आया है."
+- **card_004**: exception — both scripts stacked on the same frame throughout, not sequential.
+
+### Pass-1 errors corrected
+
+| Card | Was wrong | Fixed to |
+|------|-----------|----------|
+| card_001 | marathi field empty | "शाबाश ! सीतामाई आप धन्य हो." |
+| card_002 | english field empty | "Verily, verily is King Rama extremely fortunate to have a wife like you." |
+| card_003 | marathi field empty | "माताजी मैं वंदन करता हूँ. यह रामदास हनुमान आप के शोधार्थ आया है." |
+| All cards | Devanagari in `hindi` field | Moved to `marathi` field — user confirmed Marathi, not Hindi |
+
+### Language note on card_003 Devanagari
+
+Card_003's Marathi page uses Hindi inflections ('मैं', 'यह', 'आया है') rather than Marathi ('मी', 'हा', 'आला आहे'). Phalke's intertitles frequently mixed registers for his mixed Bombay audience. Placed in `marathi` field per project convention; S16 should note.
+
+### Implication for the automated pipeline
+
+`s02_ocr.py` currently OCRs only `representative.png` + one fallback — insufficient when the two languages occupy non-overlapping temporal windows. A robust automated fix requires detecting the within-card visual transition (SSIM or histogram shift) and sampling one frame from each resulting segment. Not implementing now — Claude vision handles this correctly for pass 1. Defer to pass 2 if automated OCR improves.
