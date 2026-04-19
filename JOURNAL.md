@@ -253,6 +253,22 @@ The full-source run was missing exactly frame `00005866` — one frame at a para
 
 **Next stage:** S05 run awaits Utsav's go-ahead (>1 min on 6,890 frames). After run: review `threshold_calibration.json` to validate percentile choices, scrub `damage_gallery.html` for subjective QC, then proceed to S06 dirt_remove design.
 
+### D20 — S06 dirt_remove Phase A: two-way model A/B (RRTN + DeepRemaster); BOFBL skipped; M3 benchmarks dropped — 2026-04-20
+
+Before writing the S06 stage, running an eval-first pass on 50 stratified cat_a frames to pick a restoration model. Four standing decisions captured here so the narrative survives outside chat and memory.
+
+**Decision 1 — M3 vs T4 benchmark dropped for all GPU stages.** Brief §5a asked for per-stage M3-vs-T4 A/B. Retracted on 2026-04-20: the candidate restoration models (BOFBL, RRTN, DeepRemaster, and downstream RIFE / Real-ESRGAN / CodeFormer) are CUDA-era PyTorch repos with custom ops (deformable conv, flow modules) that historically don't compile cleanly on MPS. Colab T4 is the confirmed production path for every GPU stage; an M3 A/B is speculative work to prove a fallback we won't use. Applies to S06, S09, S11, S12, S13. CPU stages still honour the brief's original A/B if the brief mentions them.
+
+**Decision 2 — BOFBL skipped for Phase A.** Phase A was planned as a three-way A/B: BOFBL, RRTN, DeepRemaster. Dropping BOFBL: its weights are behind a CityU SharePoint tokenized URL (`?e=...` per-session) and a Google Drive *folder* (not an individual file ID `gdown` can grab). No unattended download path. RRTN is the direct architectural successor to BOFBL — same training data, same degradation model, newer recurrent-transformer layer, better metrics on the authors' own benchmarks. DeepRemaster is an independent-lineage second opinion (temporal attention, different priors). Losing BOFBL means losing the "canonical 2022 reference" point, not a distinct architectural perspective — acceptable cost to keep Phase A fully autonomous. If Phase A fails on both models in similar ways, BOFBL can be added back with a ~2-minute manual weight fetch.
+
+**Decision 3 — Sampling: 50 stratified cat_a frames.** 10 scratched / 10 splotched / 10 dirty / 10 shot_edge / 10 normal-cat_a. Scratched bucket forced to include `00001540.png` + 9 frames evenly sampled across shot 19 (frames 1450..1538, 3.56 s) which carries a long vertical scratch from top-right to bottom-right per Utsav's review. Spatial scores (vertical-Sobel z-score, 32×32 patch-max − frame-mean, >mean+3σ pixel ratio) computed locally since S05's global stats can't separate the three localised-damage types. Manifest: `runs/s06-eval/sample_frames.json`.
+
+**Decision 4 — Branching.** Phase A lives on `s06-eval` branch cut from `main` post-housekeeping. If eval fails (no model clears the ≥60% improved-pairs bar), the branch is discarded cleanly without contaminating `main` or `ocr`.
+
+**Logistics.** 50 inputs packaged as GitHub Release asset (`s06-eval-input.tar.gz`, 70 MB) so the Colab notebook can `curl` them without manual upload. AppleDouble `._*` sidecars filtered (macOS tar quirk caused a 100-frame count on first run). Weights cached to Drive per-model (RRTN pulls from its own GitHub Releases; DeepRemaster uses the repo's `download_model.sh`). One notebook with three sections separated by "restart runtime" markers to keep per-model torch/mmcv pins isolated.
+
+**Success criterion (unchanged from plan rev 2).** ≥60% of before/after pairs show clearly improved frames without introducing new artifacts (hallucinated texture, smearing, over-smoothing). Subjective, Utsav-judged on `restoration_comparison.html` grid.
+
 ### OCR parallel workstream — 2026-04-19 (branch: `ocr`)
 
 Ran in parallel to S05; does not touch `frames_movie/` or main pipeline files. Full decision log in `OCR_JOURNAL.md`. Summary for main pipeline context:
