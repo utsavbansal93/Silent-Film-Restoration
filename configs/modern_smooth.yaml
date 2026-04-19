@@ -8,7 +8,7 @@ source:
 
 run:
   output_root: runs/
-  stages_to_run: [s00, s01, s02, s03, s04]
+  stages_to_run: [s00, s01, s02, s03, s04, s05]
 
 s00_ingest:
   output_format: png
@@ -68,6 +68,23 @@ s03_deflicker:
   window: 25
   per_shot: true
   skip_intertitles: true
+
+s05_damage_classify:
+  method: heuristic
+  workers: 0  # 0 = auto (os.cpu_count()); per brief §5a, cap to 4 on Colab 2-vCPU
+  # Laplacian variance thresholds: percentile-based so soft-focus 1917 shots aren't
+  # mis-classified as unusable. Bottom 1% of sharpness → cat_c; bottom 5% → cat_b.
+  # To override with absolute values, set cat_c_laplacian_abs / cat_b_laplacian_abs.
+  cat_c_laplacian_pct: 1.0
+  cat_b_laplacian_pct: 5.0
+  # Absolute brightness thresholds (frame-level extremes are universal)
+  cat_c_mean_low: 5.0
+  cat_c_mean_high: 240.0
+  # Extreme-pixel ratio (dark_pixel_ratio + bright_pixel_ratio)
+  cat_c_extreme_ratio: 0.90
+  cat_b_extreme_ratio: 0.30
+  # Temporal signal: upgrade cat_a → cat_b if |mean_brightness − 5-frame rolling mean| > delta
+  temporal_brightness_delta: 30.0
 
 s02_stabilise:
   # skimage_phase_corr = FFT sub-pixel registration for film-weave removal.

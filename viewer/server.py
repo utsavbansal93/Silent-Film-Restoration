@@ -92,6 +92,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         "s02e_median": "S02e — Default + temporal-median second pass (stacked)",
         "s03_deflicker": "S03 — Deflickered",
         "s04_intertitle_extract": "S04 — Intertitles extracted (movie-only frames)",
+        "s05_damage_classify": "S05 — Damage classified (cat-a/b/c tagged)",
         "s03a_mean_norm": "S03a — Mean normalisation (A)",
         "s03b_hist_match": "S03b — Histogram matching (B)",
         "s03c_ffmpeg": "S03c — ffmpeg deflicker (C)",
@@ -114,7 +115,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if not d.is_dir():
                 continue
             for sub in ("frames_raw", "frames_stabilised", "frames_deflickered",
-                        "frames_movie",
+                        "frames_movie", "frames_classified",
                         "frames_cleaned", "frames_inpainted", "frames_kept",
                         "frames_denoised", "frames_retimed", "frames_24fps",
                         "frames_upscaled", "frames_faces", "frames_sharpened",

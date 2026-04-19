@@ -17,6 +17,7 @@ STAGE_MODULES = {
     "s02": "pipeline.stages.s02_stabilise",
     "s03": "pipeline.stages.s03_deflicker",
     "s04": "pipeline.stages.s04_intertitle_extract",
+    "s05": "pipeline.stages.s05_damage_classify",
 }
 
 

@@ -73,6 +73,36 @@ class S04Cfg(BaseModel):
     cards: list[IntertitleCardCfg] = []       # empty = no-op passthrough (identity copy)
 
 
+class S05Cfg(BaseModel):
+    # heuristic = two-pass (parallel features + percentile thresholds + temporal signal)
+    # passthrough = hardlink all frames as cat_a; skips classification entirely
+    method: Literal["heuristic", "passthrough"] = "heuristic"
+
+    # workers=0 means auto (os.cpu_count() on Mac; cap to 4 on Colab 2-vCPU separately)
+    workers: int = Field(default=0, ge=0)
+
+    # Laplacian variance thresholds (percentile-based by default).
+    # Adapts to this film's actual sharpness range — avoids flagging genuine soft-focus
+    # 1917 shots as unusable. Override with *_abs to use a fixed absolute value instead.
+    cat_c_laplacian_pct: float = Field(default=1.0, ge=0.0, le=100.0)
+    cat_b_laplacian_pct: float = Field(default=5.0, ge=0.0, le=100.0)
+    cat_c_laplacian_abs: float | None = None   # if set, overrides cat_c_laplacian_pct
+    cat_b_laplacian_abs: float | None = None   # if set, overrides cat_b_laplacian_pct
+
+    # Absolute brightness thresholds (frame-level extremes are universal, not relative).
+    cat_c_mean_low: float = Field(default=5.0, ge=0.0, le=255.0)
+    cat_c_mean_high: float = Field(default=240.0, ge=0.0, le=255.0)
+
+    # Extreme-pixel ratio: sum of dark_pixel_ratio (<10) + bright_pixel_ratio (>245)
+    cat_c_extreme_ratio: float = Field(default=0.90, ge=0.0, le=1.0)
+    cat_b_extreme_ratio: float = Field(default=0.30, ge=0.0, le=1.0)
+
+    # Temporal brightness signal: if |mean_brightness − 5-frame rolling mean| > this,
+    # upgrade cat_a → cat_b. Catches single anomalous frames in stable scenes.
+    # Set to 0.0 to disable.
+    temporal_brightness_delta: float = Field(default=30.0, ge=0.0)
+
+
 class S03Cfg(BaseModel):
     # hist_match = per-frame histogram matched against a rolling reference
     #   (median of nearby frames within the same shot). Primary — 91% flicker
@@ -111,6 +141,7 @@ class PipelineConfig(BaseModel):
     s02_stabilise: S02Cfg = S02Cfg()
     s03_deflicker: S03Cfg = S03Cfg()
     s04_intertitle_extract: S04Cfg = S04Cfg()
+    s05_damage_classify: S05Cfg = S05Cfg()
 
     @field_validator("profile_name")
     @classmethod
@@ -126,6 +157,7 @@ class PipelineConfig(BaseModel):
             "s02": self.s02_stabilise,
             "s03": self.s03_deflicker,
             "s04": self.s04_intertitle_extract,
+            "s05": self.s05_damage_classify,
         }
         if stage_id not in mapping:
             raise KeyError(f"Unknown stage id: {stage_id}")
