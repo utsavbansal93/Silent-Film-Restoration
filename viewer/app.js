@@ -36,20 +36,45 @@ async function refreshPane(which) {
   const stagePath = sel.value;
   const label = sel.options[sel.selectedIndex]?.textContent || stagePath;
   const frames = await api(`/api/frames/${encodeURIComponent(state.run)}/${stagePath}`);
-  state["frames" + which] = frames;
+  // Each entry is now {name, real} — backward-compat with plain strings if server is old.
+  state["frames" + which] = frames.map(f => typeof f === "string" ? { name: f, real: true } : f);
   state["stage" + which] = stagePath;
   $("title" + which).textContent = label;
-  const total = Math.min(state.framesA.length, state.framesB.length);
-  $("scrub").max = Math.max(0, total - 1);
-  $("frameTotal").textContent = total;
+  updateValidRange();
+}
+
+// Clamp the scrub range to the intersection of "real" (non-symlink) frames
+// across both panes. Lets a deflicker variant that only processed 116 frames
+// show just those 116 positions in the viewer even though each variant dir
+// contains 7,821 symlinked frames for positional alignment.
+function updateValidRange() {
+  const A = state.framesA, B = state.framesB;
+  if (!A?.length || !B?.length) return;
+  const n = Math.min(A.length, B.length);
+  let minValid = -1, maxValid = -1;
+  for (let i = 0; i < n; i++) {
+    if (A[i]?.real && B[i]?.real) {
+      if (minValid === -1) minValid = i;
+      maxValid = i;
+    }
+  }
+  if (minValid === -1) { minValid = 0; maxValid = n - 1; }
+  state.rangeMin = minValid;
+  state.rangeMax = maxValid;
+  $("scrub").min = minValid;
+  $("scrub").max = maxValid;
+  if (state.idx < minValid || state.idx > maxValid) state.idx = minValid;
+  const count = maxValid - minValid + 1;
+  $("frameTotal").textContent = count === n ? count : `${count} (frames ${minValid}–${maxValid})`;
+  renderFrame();
 }
 
 function renderFrame() {
   const i = state.idx;
   const fa = state.framesA[i];
   const fb = state.framesB[i];
-  if (fa) $("imgA").src = `/runs/${state.run}/${state.stageA}/${fa}`;
-  if (fb) $("imgB").src = `/runs/${state.run}/${state.stageB}/${fb}`;
+  if (fa) $("imgA").src = `/runs/${state.run}/${state.stageA}/${fa.name}`;
+  if (fb) $("imgB").src = `/runs/${state.run}/${state.stageB}/${fb.name}`;
   $("frameIdx").textContent = i;
   $("scrub").value = i;
 }
@@ -70,12 +95,13 @@ function play() {
   $("playBtn").textContent = "⏸ Pause";
   $("playBtn").classList.add("active");
   playTimer = setInterval(() => {
-    const total = parseInt($("scrub").max);
-    if (state.idx >= total) {
-      if ($("loopChk").checked) { state.idx = 0; }
+    const lo = state.rangeMin ?? 0;
+    const hi = state.rangeMax ?? parseInt($("scrub").max);
+    if (state.idx >= hi) {
+      if ($("loopChk").checked) { state.idx = lo; }
       else { stop(); return; }
     } else {
-      state.idx += 1;
+      state.idx = Math.max(lo, state.idx + 1);
     }
     renderFrame();
   }, interval);
@@ -86,10 +112,11 @@ $("playBtn").onclick = togglePlay;
 $("fpsSel").onchange = () => { if (isPlaying()) { stop(); play(); } };
 
 document.addEventListener("keydown", (e) => {
-  const total = parseInt($("scrub").max);
+  const lo = state.rangeMin ?? 0;
+  const hi = state.rangeMax ?? parseInt($("scrub").max);
   const step = e.shiftKey ? 10 : 1;
-  if (e.key === "ArrowLeft") { stop(); state.idx = Math.max(0, state.idx - step); renderFrame(); }
-  if (e.key === "ArrowRight") { stop(); state.idx = Math.min(total, state.idx + step); renderFrame(); }
+  if (e.key === "ArrowLeft")  { stop(); state.idx = Math.max(lo, state.idx - step); renderFrame(); }
+  if (e.key === "ArrowRight") { stop(); state.idx = Math.min(hi, state.idx + step); renderFrame(); }
   if (e.code === "Space" && e.target.tagName !== "SELECT" && e.target.tagName !== "INPUT") {
     e.preventDefault(); togglePlay();
   }

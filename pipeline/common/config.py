@@ -62,6 +62,30 @@ class S01Cfg(BaseModel):
     intertitle_detection: IntertitleDetectionCfg = IntertitleDetectionCfg()
 
 
+class IntertitleCardCfg(BaseModel):
+    id: str                                   # e.g. "C1"
+    orig_start_frame: int = Field(ge=0)       # inclusive, 0-indexed into the S03 stream
+    orig_end_frame: int = Field(ge=0)         # inclusive
+    label: str = ""                           # freeform notes
+
+
+class S04Cfg(BaseModel):
+    cards: list[IntertitleCardCfg] = []       # empty = no-op passthrough (identity copy)
+
+
+class S03Cfg(BaseModel):
+    # hist_match = per-frame histogram matched against a rolling reference
+    #   (median of nearby frames within the same shot). Primary — 91% flicker
+    #   reduction on shot 21+22 sample, subsumes mean normalisation.
+    # mean_norm = 1st-moment-only rescale. Fast, 82% on the same sample.
+    # ffmpeg = ffmpeg -vf deflicker=size=5:mode=am. Baseline, 51%.
+    # passthrough = copy frames unchanged.
+    method: Literal["hist_match", "mean_norm", "ffmpeg", "passthrough"] = "hist_match"
+    window: int = Field(default=25, ge=3, le=200)
+    per_shot: bool = True
+    skip_intertitles: bool = True
+
+
 class S02Cfg(BaseModel):
     # skimage_phase_corr: FFT-based sub-pixel frame-to-frame alignment.
     #   Designed for film weave (hand-crank gate jitter). Robust to dirt/grain.
@@ -85,6 +109,8 @@ class PipelineConfig(BaseModel):
     s00_ingest: S00Cfg = S00Cfg()
     s01_probe: S01Cfg = S01Cfg()
     s02_stabilise: S02Cfg = S02Cfg()
+    s03_deflicker: S03Cfg = S03Cfg()
+    s04_intertitle_extract: S04Cfg = S04Cfg()
 
     @field_validator("profile_name")
     @classmethod
@@ -98,6 +124,8 @@ class PipelineConfig(BaseModel):
             "s00": self.s00_ingest,
             "s01": self.s01_probe,
             "s02": self.s02_stabilise,
+            "s03": self.s03_deflicker,
+            "s04": self.s04_intertitle_extract,
         }
         if stage_id not in mapping:
             raise KeyError(f"Unknown stage id: {stage_id}")

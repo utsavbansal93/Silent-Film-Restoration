@@ -30,6 +30,13 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(project_root()), **kwargs)
 
+    def end_headers(self):
+        # Force fresh HTML/JS every request — avoids "my JS change isn't showing"
+        # confusion. Frame PNGs are fine to cache within a session.
+        if self.path.endswith(".html") or self.path.endswith(".js") or self.path.startswith("/api/"):
+            self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+        super().end_headers()
+
     def do_GET(self):  # noqa: N802
         if self.path == "/api/runs":
             self._send_json(self._list_runs())
@@ -84,6 +91,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         "s02d_ffmpeg": "S02d — ffmpeg deshake (block matching)",
         "s02e_median": "S02e — Default + temporal-median second pass (stacked)",
         "s03_deflicker": "S03 — Deflickered",
+        "s04_intertitle_extract": "S04 — Intertitles extracted (movie-only frames)",
+        "s03a_mean_norm": "S03a — Mean normalisation (A)",
+        "s03b_hist_match": "S03b — Histogram matching (B)",
+        "s03c_ffmpeg": "S03c — ffmpeg deflicker (C)",
+        "s03bc_stacked": "S03bc — Histogram matching → ffmpeg (B→C stacked)",
         "s05_dirt_remove": "S05 — Dirt removed",
         "s08_denoise": "S08 — Denoised",
         "s10_interpolate": "S10 — Interpolated (24 fps)",
@@ -102,6 +114,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             if not d.is_dir():
                 continue
             for sub in ("frames_raw", "frames_stabilised", "frames_deflickered",
+                        "frames_movie",
                         "frames_cleaned", "frames_inpainted", "frames_kept",
                         "frames_denoised", "frames_retimed", "frames_24fps",
                         "frames_upscaled", "frames_faces", "frames_sharpened",
@@ -119,7 +132,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         target = runs_dir() / run_name / frames_rel
         if not target.is_dir():
             return []
-        return sorted([p.name for p in target.glob("*.png")])
+        # Mark symlinks so the client can clamp the scrub range to the real
+        # (test-window) frames of a variant. For stages without symlinks
+        # (S00, S02, full-source runs) everything is "real" and the client
+        # behaves as before.
+        return [{"name": p.name, "real": not p.is_symlink()} for p in sorted(target.glob("*.png"))]
 
 
 def main():

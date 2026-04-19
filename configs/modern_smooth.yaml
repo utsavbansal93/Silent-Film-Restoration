@@ -8,7 +8,7 @@ source:
 
 run:
   output_root: runs/
-  stages_to_run: [s00, s01, s02]
+  stages_to_run: [s00, s01, s02, s03, s04]
 
 s00_ingest:
   output_format: png
@@ -39,6 +39,35 @@ s01_probe:
     area_threshold: 0.08
     resize_width: 640
     resize_height: 384
+
+s04_intertitle_extract:
+  # User-verified cards (Utsav reviewed EAST output in the viewer). Cards 55, 63
+  # (other EAST flags ≥1s) were false positives. 4 real cards:
+  cards:
+    - id: C1
+      orig_start_frame: 200
+      orig_end_frame: 355
+      label: "Opening intertitle (English + Marathi, likely stacked)"
+    - id: C2
+      orig_start_frame: 3477
+      orig_end_frame: 3834
+      label: "Mid-film card"
+    - id: C3
+      orig_start_frame: 7055
+      orig_end_frame: 7437
+      label: "Late-film card"
+    - id: C4
+      orig_start_frame: 7774
+      orig_end_frame: 7807
+      label: "End of Part One"
+
+s03_deflicker:
+  # hist_match won by a big margin on the 4.6s sample (91% vs 82% for
+  # mean_norm and 51% for ffmpeg). See JOURNAL D17.
+  method: hist_match
+  window: 25
+  per_shot: true
+  skip_intertitles: true
 
 s02_stabilise:
   # skimage_phase_corr = FFT sub-pixel registration for film-weave removal.

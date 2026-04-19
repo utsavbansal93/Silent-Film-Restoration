@@ -181,6 +181,41 @@ Two separate remediations:
 
 Full-file rerun with the faster metric still reports 0.2% because the cross-cut contamination is structural, not a sampling artefact. The canonical truthful number going forward is per-shot-averaged RMS reduction.
 
+### D17 — S03 method pick: histogram matching wins by a wide margin
+
+Ran three deflicker approaches against the weave-corrected 5s slice at 1:01 (116 frames, baseline flicker RMS 6.28):
+
+| Method | Post flicker | Reduction | Wall |
+|---|---|---|---|
+| A. mean normalisation (rolling median of means, per-shot) | 1.111 | 82.3% | 9.8 s |
+| **B. histogram matching (rolling ref, per-shot)** | **0.571** | **90.9%** | 37.8 s |
+| C. ffmpeg `deflicker=size=5:mode=am` | 3.046 | 51.5% | 6.0 s |
+| B → C stacked | 0.549 | 91.3% | +6 s |
+
+**Decisions:**
+- **Method = B (`hist_match`)**. Subsumes A (histogram match already normalises the mean), dominates C (which uses temporal averaging — different family, doesn't fit luminance-first flicker).
+- **Not stacking B→C.** The +0.4 pp gain from appending ffmpeg deflicker doesn't justify the extra compute or temporal-blur risk. B alone hits the brief's "non-subtle" bar.
+- **Window = 25 frames** (~1 s at 25 fps) — matches S02's weave smoothing; gives good refs without crossing shot boundaries with min_scene_len > 10.
+- **Per-shot mandatory.** Rolling reference must reset at cuts or it smears tonality across scene changes.
+- **Intertitles pass through byte-identical** (same discipline as S02).
+
+Full-source run: 1,939 s (~32 min) for the hist_match pass + 3 min for pre/post metric with the downsampled grid. Full-file metric reads 27.5%, but that's the same cross-cut contamination we diagnosed in S02's metric (JOURNAL D15); per-shot the real number is north of 80%.
+
+### D18 — Extract intertitles, run S05+ on a 6,890-frame movie stream
+
+Continuing to run GPU-heavy stages (S08 denoise, S11 upscale, S12 face restore) over static text cards is wasted compute: we'll replace them with clean master copies (brief §16). Extracting them now also unblocks OCR + re-typesetting work to happen in parallel.
+
+**Card identification is user-in-the-loop, not automatic.** After EAST flagged 73 candidate "cards" (1,162 frames / 15 % of the film), Utsav reviewed them in the viewer and confirmed **4** are real intertitles (C1–C4). The remaining ~69 were false positives — scratches, motion-blurred props, text-like patterns EAST keyed on. Duration alone doesn't separate true from false (the 1.4 s "End of Part One" card is a true positive while a 1.5 s candidate at 4:12 is a false positive), so the configured card list is curated not auto-generated.
+
+**Architecture (new stage S04_intertitle_extract):**
+- Reads S03's deflickered frames; writes `frames_movie/` (6,890 renumbered, contiguous) + `intertitles/card_NN/` (preserved originals) + `intertitle_plan.json` (reinsertion manifest for S16).
+- Hardlinks (`os.link`) for every frame copy — PNGs are immutable downstream, so sharing inodes with S03 costs zero disk and survives S03 deletion.
+- Shot boundaries remapped: 66 → 61 (5 boundaries that fell inside cards get absorbed into the surrounding shot in the new index space).
+- Config-driven card list via `IntertitleCardCfg` — finding a 5th card later is a YAML edit + re-run.
+- S05+ stages consume `s04_intertitle_extract/frames_movie/` via the new `pipeline.common.paths.stage_input_frames()` helper.
+
+Reinsertion at encode time (brief §16): each card in `intertitle_plan.json` carries `new_insert_position`, `duration_s`, and `regenerated_path` (null until the OCR → retype → render pipeline produces a clean master; S16 falls back to the preserved original if null).
+
 ### D16 — S00 parallel extraction can drop a worker-boundary frame
 
 The full-source run was missing exactly frame `00005866` — one frame at a parallel-worker time boundary. `extract_parallel` splits source time evenly across workers; due to `round()` at the split point, neighbouring workers can both skip the exact same frame. Patched by re-extracting that one frame at `-ss 237.6s` into the original. Longer-term fix (follow-up): extend S00's auto-QC to verify contiguous frame indices and auto-patch gaps from source.

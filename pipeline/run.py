@@ -15,6 +15,8 @@ STAGE_MODULES = {
     "s00": "pipeline.stages.s00_ingest",
     "s01": "pipeline.stages.s01_probe",
     "s02": "pipeline.stages.s02_stabilise",
+    "s03": "pipeline.stages.s03_deflicker",
+    "s04": "pipeline.stages.s04_intertitle_extract",
 }
 
 
