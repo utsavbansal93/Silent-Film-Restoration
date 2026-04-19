@@ -21,6 +21,7 @@ dependencies = [
     "scenedetect[opencv-headless]>=0.6.3",
     "scikit-image>=0.22",
     "psutil>=5.9",
+    "easyocr>=1.7",
 ]
 
 [project.optional-dependencies]
@@ -31,10 +32,10 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["pipeline*"]
+include = ["pipeline*", "ocr*"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "ocr/tests"]
 addopts = "-ra --strict-markers"
 markers = [
     "integration: end-to-end stage tests on the 30s fixture",

@@ -1,0 +1,78 @@
+[
+  {
+    "card_id": "card_001",
+    "source_frames": [
+      "representative.png"
+    ],
+    "marathi": {
+      "text": "",
+      "confidence": 0.0
+    },
+    "hindi": {
+      "text": "",
+      "confidence": 0.0
+    },
+    "english": {
+      "text": "Bravo ! Bravo !! Blessed indeed are you Queen Sita.",
+      "confidence": 0.95
+    },
+    "notes": "Claude vision reading (EasyOCR garbled: 'Bravo 8.a\"98 Blessed undeeo ? 70 Queen Siva' conf=0.33). Header (faded): Lankadahan. Character label: Hanuman. Footer: Phalke's Films. Bombay. No Devanagari legible in representative frame."
+  },
+  {
+    "card_id": "card_002",
+    "source_frames": [
+      "representative.png"
+    ],
+    "marathi": {
+      "text": "",
+      "confidence": 0.0
+    },
+    "hindi": {
+      "text": "माताजी! श्रीरामचंद्र जी का अहो भाग्य हे. आप की जन्मी पत्नी उन को प्राप्त हुई!",
+      "confidence": 0.88
+    },
+    "english": {
+      "text": "",
+      "confidence": 0.0
+    },
+    "notes": "Claude vision reading (EasyOCR garbled: 'मानाज्ञा ! श्रीगमचंद्र ज्ञा का 3ह आाग्य...' conf=0.35). Linguistic note: 'अहो' and 'हे' copula suggest Marathi rather than Hindi — placed in hindi field per schema convention; human review recommended to confirm. Header: Lankadahan. Footer: Phalke's Films. Bombay."
+  },
+  {
+    "card_id": "card_003",
+    "source_frames": [
+      "representative.png"
+    ],
+    "marathi": {
+      "text": "",
+      "confidence": 0.0
+    },
+    "hindi": {
+      "text": "",
+      "confidence": 0.0
+    },
+    "english": {
+      "text": "I am Hanuman, a servant of Rama, come in search of you.",
+      "confidence": 0.98
+    },
+    "notes": "Claude vision reading (EasyOCR garbled start: 'a0 Hanuman, 6 serant of Rama come in search of you 7m Bomba' conf=0.54). Header: Lankadahan. Character label: Hanuman : Footer: Phalke's Films. Bombay. No Devanagari on this card."
+  },
+  {
+    "card_id": "card_004",
+    "source_frames": [
+      "representative.png"
+    ],
+    "marathi": {
+      "text": "",
+      "confidence": 0.0
+    },
+    "hindi": {
+      "text": "प्रथम मण्डल समाप्त. हिन्दुस्तान",
+      "confidence": 0.9
+    },
+    "english": {
+      "text": "END OF PART ONE.",
+      "confidence": 0.97
+    },
+    "notes": "Claude vision reading (EasyOCR: english 'END 0| PARa ONE' conf=0.67; hindi 'यथम मणहर ममात. २ िवस्थान' conf=0.20). 'हिन्दुस्तान' at card bottom = production company name (Hindustan Cinema Films Company). Decorative bordered card. Both scripts clearly legible."
+  }
+]
