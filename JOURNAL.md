@@ -269,6 +269,24 @@ Before writing the S06 stage, running an eval-first pass on 50 stratified cat_a 
 
 **Success criterion (unchanged from plan rev 2).** ≥60% of before/after pairs show clearly improved frames without introducing new artifacts (hallucinated texture, smearing, over-smoothing). Subjective, Utsav-judged on `restoration_comparison.html` grid.
 
+**Phase A execution log — 2026-04-20.**
+
+What happened:
+1. Sampling, tarball, Colab notebook, T4 session, Drive input staging — all worked.
+2. **RRTN blocked at install.** Colab's kernel is Python 3.12 + torch 2.10.0 + CUDA 12.8. OpenMMLab has no pre-built mmcv wheel for torch 2.10/cu128 (pre-builts top out at torch 2.5/cu124). `mim install mmcv` also broken because `openmim` depends on `pkgutil.ImpImporter`, removed in Py3.12. Source-build would need manual CUDA/torch-pinning coordination. Skipped this session.
+3. **DeepRemaster gotcha.** remaster.py appeared to "run successfully" (100% progress, exit 0) but wrote 0 output PNGs. Root cause: `remaster.py` lines 181–184 — after inference it ffmpegs the per-frame PNGs into `{basename}_in.mp4`, `_out.mp4`, `_comp.mp4` and then `shutil.rmtree(outputdir)` deletes the whole `tmp/` dir. The restored video survives; the frames don't. Worked around by extracting frames from `in_out.mp4` post-hoc and mapping them back to original filenames by sort order.
+4. **DeepRemaster result: FAIL.** 50/50 frames, 36 s wall, 1.39 fps on T4. Utsav's review: "didn't do much, and some frames like 00004528 got actively worse." Fails the ≥60% gate; introduces new artifacts on at least one cat_a frame. DeepRemaster is not a viable S06 for this source.
+
+**Standing diagnosis (2026-04-20):** out-of-distribution training data. BOFBL/RRTN/DeepRemaster were all trained on REDS or similar modern video-degradation simulations (colour, 720p+, synthetic scratches/noise). Lanka Dahan 1917 is B&W, soft-focus silent-era film with celluloid-specific damage types the training data doesn't reproduce. "DR didn't do much" is the expected outcome of OOD restoration; "some frames got worse" is the expected failure mode (hallucination toward in-distribution priors).
+
+**Revised Phase A read:** the 3-way learned-restoration A/B is probably the wrong test. The correct test is "learned vs classical" — and with 1 learned data point returning "useless or harmful," classical is now the likely S06 design. Deferring the decision to Utsav.
+
+**Useful exhaust from this session:**
+- `colab/s06_eval/` infrastructure (sampling, notebook, comparison renderer, Drive-connector download path) is reusable for any future model eval.
+- `runs/s06-eval/comparison.html` is the subjective record of DR's failure — keep for future reference.
+- GitHub Release `s06-eval-input` (70 MB tarball of 50 stratified frames) — keep as canonical eval sample.
+- Time cost: ~1 hour of actual debugging + infrastructure. Model-compatibility issues with Colab's 2025 kernel are the dominant cost; next eval-style task should use a pinned env from the start (Kaggle, Modal, or `pip install torch==2.4.0` early in the Colab notebook).
+
 ### OCR parallel workstream — 2026-04-19 (branch: `ocr`)
 
 Ran in parallel to S05; does not touch `frames_movie/` or main pipeline files. Full decision log in `OCR_JOURNAL.md`. Summary for main pipeline context:
