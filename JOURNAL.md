@@ -287,6 +287,22 @@ What happened:
 - GitHub Release `s06-eval-input` (70 MB tarball of 50 stratified frames) — keep as canonical eval sample.
 - Time cost: ~1 hour of actual debugging + infrastructure. Model-compatibility issues with Colab's 2025 kernel are the dominant cost; next eval-style task should use a pinned env from the start (Kaggle, Modal, or `pip install torch==2.4.0` early in the Colab notebook).
 
+**2026-04-20 — pivot to M3-first and VapourSynth approval.** After DR's failure Utsav said "I'm not liking these colab models for S06. Let's find best M3-compatible ones." Web search surfaced **VapourSynth** as the production-grade film-restoration stack used by archivists. All five plugins we need are native arm64 on M3:
+- Homebrew `vapoursynth` (R73) + `vapoursynth-imwri` (PNG I/O) + `fftw` (MVTools dep)
+- `libremovedirtvs.dylib`, `libmvtools.dylib`, `libremovegrain.dylib` from `yuygfgg/Macos_vapoursynth_plugins` (pre-built arm64, last push 2025-12-04)
+- `libdescratch.dylib` built from source from `vapoursynth/descratch` (Fizick+Mellbin, 2026-04-08) via meson+ninja in ~5 s. DeScratch was written by Fizick in 2003 explicitly to restore his own 8mm films — same vintage + intent as Phalke's 1917 footage, which is the best possible training prior.
+
+**Eval strategy change:** pivoted from 50 stratified frames to **3 full shots** (~420 frames total). Reason: temporal filters (`rgvs.Clense` = 3-frame median) need contiguous context, and the viewer's A/B plays frame-by-frame so shots are the right unit. Shots chosen:
+- Shot 0 (frames 1..125, 5.00 s) — clean control
+- Shot 19 (frames 1450..1538, 3.56 s) — the vertical-scratch test case Utsav flagged earlier
+- Shot 21 (frames 1561..1768, 8.32 s) — longer shot for dust test
+
+**Pipeline per frame** (`colab/s06_eval/run_vapoursynth.py`): imwri.Read → YUV444P8 → `rgvs.Clense` (temporal median, dust) → `descratch.DeScratch(mindif=5, maxwidth=5, minlen=50, modey=1)` (vertical scratches on luma) → `rgvs.RemoveGrain(mode=17)` (mild edge-preserving spatial denoise) → RGB24 → imwri.Write. ~2.7 fps on M3 CPU single-threaded. `colab/s06_eval/wire_to_viewer.py` hardlinks the ~420 cleaned frames + 6,468 passthrough frames into `runs/canonical-base/s06_vapoursynth_eval/frames_cleaned/` so viewer A/B works across the full 6,890-frame stream.
+
+**Utsav approval 2026-04-20: VapourSynth pipeline passes Phase A on shots 0, 19, 21.** S06 stage will be built around this pipeline.
+
+**Next (Phase B):** write `pipeline/stages/s06_dirt_remove.py` proper. Click CLI mirroring S05. Reads `damage_map.json` for routing (cat_a processed, cat_b passthrough, cat_c absent). Respects S04's `shot_boundaries_adjusted.json` so `Clense` doesn't cross cuts. Config knobs in YAML: `descratch.{mindif,maxwidth,minlen}`, `clense.enabled`, `removegrain.mode`. Same config_hash machinery as S05.
+
 ### OCR parallel workstream — 2026-04-19 (branch: `ocr`)
 
 Ran in parallel to S05; does not touch `frames_movie/` or main pipeline files. Full decision log in `OCR_JOURNAL.md`. Summary for main pipeline context:

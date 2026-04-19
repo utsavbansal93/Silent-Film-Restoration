@@ -93,6 +93,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         "s03_deflicker": "S03 — Deflickered",
         "s04_intertitle_extract": "S04 — Intertitles extracted (movie-only frames)",
         "s05_damage_classify": "S05 — Damage classified (cat-a/b/c tagged)",
+        "s06_vapoursynth_eval": "S06 — VapourSynth eval (shots 0/19/21 cleaned; rest passthrough)",
         "s03a_mean_norm": "S03a — Mean normalisation (A)",
         "s03b_hist_match": "S03b — Histogram matching (B)",
         "s03c_ffmpeg": "S03c — ffmpeg deflicker (C)",
