@@ -17,6 +17,9 @@
   input[type=range] { flex: 1; }
   .muted { color: var(--muted); }
   kbd { background: #333; border-radius: 3px; padding: 1px 5px; font: 11px monospace; }
+  button { background: #2a2a2a; color: var(--fg); border: 1px solid #444; padding: 4px 12px; cursor: pointer; font: inherit; }
+  button:hover { background: #333; }
+  button.active { background: var(--accent); color: #000; border-color: var(--accent); }
 </style>
 </head>
 <body>
@@ -25,13 +28,18 @@
   <span>Left: <select id="stageA"></select></span>
   <span>Right: <select id="stageB"></select></span>
   <span class="muted">Frame <span id="frameIdx">0</span> / <span id="frameTotal">0</span></span>
-  <span class="muted">Keys: <kbd>←</kbd> <kbd>→</kbd> step · <kbd>Shift+←/→</kbd> ×10</span>
+  <span class="muted">Keys: <kbd>←</kbd> <kbd>→</kbd> step · <kbd>Shift+←/→</kbd> ×10 · <kbd>Space</kbd> play</span>
 </header>
 <main class="stages">
   <div class="pane"><h3 id="titleA">stage A</h3><img id="imgA" alt=""/></div>
   <div class="pane"><h3 id="titleB">stage B</h3><img id="imgB" alt=""/></div>
 </main>
 <div class="controls">
+  <button id="playBtn" title="Space">▶ Play</button>
+  <label class="muted">fps <select id="fpsSel">
+    <option>6</option><option>12</option><option selected>24</option><option>25</option><option>30</option><option>60</option>
+  </select></label>
+  <label class="muted"><input id="loopChk" type="checkbox" checked /> loop</label>
   <input id="scrub" type="range" min="0" max="0" value="0" />
 </div>
 <script src="/viewer/app.js"></script>

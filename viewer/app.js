@@ -54,11 +54,43 @@ function renderFrame() {
 
 $("scrub").oninput = (e) => { state.idx = parseInt(e.target.value); renderFrame(); };
 
+let playTimer = null;
+function isPlaying() { return playTimer !== null; }
+function stop() {
+  if (playTimer) { clearInterval(playTimer); playTimer = null; }
+  $("playBtn").textContent = "▶ Play";
+  $("playBtn").classList.remove("active");
+}
+function play() {
+  if (isPlaying()) return;
+  const fps = parseInt($("fpsSel").value) || 24;
+  const interval = 1000 / fps;
+  $("playBtn").textContent = "⏸ Pause";
+  $("playBtn").classList.add("active");
+  playTimer = setInterval(() => {
+    const total = parseInt($("scrub").max);
+    if (state.idx >= total) {
+      if ($("loopChk").checked) { state.idx = 0; }
+      else { stop(); return; }
+    } else {
+      state.idx += 1;
+    }
+    renderFrame();
+  }, interval);
+}
+function togglePlay() { isPlaying() ? stop() : play(); }
+
+$("playBtn").onclick = togglePlay;
+$("fpsSel").onchange = () => { if (isPlaying()) { stop(); play(); } };
+
 document.addEventListener("keydown", (e) => {
   const total = parseInt($("scrub").max);
   const step = e.shiftKey ? 10 : 1;
-  if (e.key === "ArrowLeft") { state.idx = Math.max(0, state.idx - step); renderFrame(); }
-  if (e.key === "ArrowRight") { state.idx = Math.min(total, state.idx + step); renderFrame(); }
+  if (e.key === "ArrowLeft") { stop(); state.idx = Math.max(0, state.idx - step); renderFrame(); }
+  if (e.key === "ArrowRight") { stop(); state.idx = Math.min(total, state.idx + step); renderFrame(); }
+  if (e.code === "Space" && e.target.tagName !== "SELECT" && e.target.tagName !== "INPUT") {
+    e.preventDefault(); togglePlay();
+  }
 });
 
 loadRuns().catch((e) => { document.body.innerHTML = "<p style='color:#f66;padding:20px'>Error: " + e.message + "</p>"; });
