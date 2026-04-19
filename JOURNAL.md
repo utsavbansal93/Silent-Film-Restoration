@@ -220,6 +220,68 @@ Reinsertion at encode time (brief §16): each card in `intertitle_plan.json` car
 
 The full-source run was missing exactly frame `00005866` — one frame at a parallel-worker time boundary. `extract_parallel` splits source time evenly across workers; due to `round()` at the split point, neighbouring workers can both skip the exact same frame. Patched by re-extracting that one frame at `-ss 237.6s` into the original. Longer-term fix (follow-up): extend S00's auto-QC to verify contiguous frame indices and auto-patch gaps from source.
 
+### D19 — S05 damage_classify: heuristic two-pass classifier with adaptive thresholds
+
+**Why heuristic over ML.** Brief §4 lists raywzy/Bringing-Old-Films-Back-to-Life as a candidate for this stage. Evaluated: BOFBL is a pixel-transformation model (dirt removal, denoise, upscale). Using it for binary/ternary classification would add a model download (~100s MB, needs approval), GPU inference overhead, and a hard dependency on a CVPR 2022 checkpoint just to emit a three-way label per frame. Heuristic features (Laplacian variance, brightness, extreme-pixel ratio) are CPU-only, transparent, directly tunable in YAML, and were already validated in S01's damage heuristics block. BOFBL is better deployed at S06/S09/S11 where it actually transforms pixels.
+
+**Why percentile-based thresholds.** Absolute Laplacian thresholds (e.g. 50.0) are fragile on 1917 footage: soft-focus shots, intentional low-contrast scenes, and naturally flat 100-year-old celluloid all produce low Laplacian variance without being damaged. Setting `cat_c_laplacian_pct=1.0` means "the bottom 1% of sharpness in *this film's own distribution*" — adaptive to what Phalke's camera actually resolves. Absolute overrides (`cat_c_laplacian_abs`, `cat_b_laplacian_abs`) are available for manual tuning after reviewing `threshold_calibration.json`.
+
+**Two-pass algorithm:**
+1. Parallel feature extraction (`multiprocessing.Pool`) — grayscale-downsample each frame to 640×360, compute Laplacian variance + mean brightness + dark/bright pixel ratios. Pool.map preserves input order so no sort is needed.
+2. Between passes: compute percentile thresholds from the full feature distribution; emit `threshold_calibration.json` immediately so the thresholds are visible even if the run dies; compute 5-frame rolling brightness means per shot.
+3. Sequential classification pass — pure `classify_frame()` function, O(n) dict lookups.
+
+**Temporal brightness signal (cheap, targeted).** After Pass 1, a 5-frame centered rolling mean of `mean_brightness` is computed per shot (resetting at boundaries). Frames deviating by >30 from the rolling mean are upgraded from cat_a → cat_b. This catches single anomalous frames in otherwise stable scenes — the primary cat_b case in hand-cranked 1917 film — without opening the SSIM complexity door. Controlled by `temporal_brightness_delta: 30.0`; disable with 0.0.
+
+**Zero-disk frames_classified/.** Hardlinks from `frames_movie/` for viewer support. Same pattern as S04's D18 intertitle extraction. Viewers can scrub the classified stream; the gallery is the per-run visual review artifact.
+
+**Auto-QC design.** Hard stops at `cat_c > 15%` (would drop ~1,000 frames on a 5-min deliverable) and `cat_a < 50%` (most frames classified as damaged → logic error). Soft fails at `cat_c > 5%` and `cat_a < 70%`, with `qc_soft_fail: true` written to `damage_summary.json`. Gallery is the visual review gate — 10 random cat-b + 10 cat-c frames with scores and reasons. Seed 42 for deterministic sampling.
+
+**Downstream cache invalidation.** `damage_map.json` carries `config_hash` (S05's section hash). S06/S07/S08 can check whether their cached predecessor's hash matches before deciding whether to re-run.
+
+**38 unit tests passing** (25 pre-existing + 13 new). New tests use explicit `S05Cfg(...)` and `ResolvedThresholds(...)` values rather than defaults, so threshold retuning doesn't silently invalidate them.
+
+**cv2 incident.** `opencv-python-headless 4.13.0.92` was listed in dist-info but the actual cv2 extension was absent — the wheel had apparently installed without extracting its compiled `.so`. Fixed by `pip install --force-reinstall opencv-python-headless`. Root cause: unclear (possibly a prior install that died mid-extraction). No changes to pyproject.toml needed.
+
+**Files added/modified this session:**
+- `pipeline/stages/s05_damage_classify.py` — new stage
+- `pipeline/common/config.py` — S05Cfg class + PipelineConfig registration
+- `configs/modern_smooth.yaml` — s05_damage_classify block; s05 added to stages_to_run
+- `pipeline/run.py` — s05 entry in STAGE_MODULES
+- `viewer/server.py` — s05_damage_classify label; frames_classified in _list_stages subdir list
+- `tests/unit/test_s05_damage_classify.py` — 13 new unit tests
+
+**Next stage:** S05 run awaits Utsav's go-ahead (>1 min on 6,890 frames). After run: review `threshold_calibration.json` to validate percentile choices, scrub `damage_gallery.html` for subjective QC, then proceed to S06 dirt_remove design.
+
+### OCR parallel workstream — 2026-04-19 (branch: `ocr`)
+
+Ran in parallel to S05; does not touch `frames_movie/` or main pipeline files. Full decision log in `OCR_JOURNAL.md`. Summary for main pipeline context:
+
+**Inputs used:** `s04_intertitle_extract/intertitles/c1–c4/` — S04's card grouping already constitutes deduplication; no re-clustering needed.
+
+**Structure discovery (D3 in OCR_JOURNAL.md):** Each card group holds two sequential "pages" — English first, then Marathi (Devanagari) — not a single bilingual frame. S04's `representative.png` (midpoint frame) captured only one language per card. Frame-scrubbing was required to find both pages. card_004 ("End of Part One") is the exception: both scripts stacked on the same frame throughout.
+
+**OCR engine outcome:** EasyOCR 1.7 with `['hi', 'en']` produced garbled output on all four cards — 1917 letterforms are too far from the model's training distribution. Text fields in `ocr/canonical/intertitles.json` are Claude multimodal vision readings (conf 0.88–0.98); EasyOCR raw retained in each card's `notes` field. See OCR_JOURNAL.md D2.
+
+**Final extracted text (both pages per card):**
+
+| Card | English | Marathi |
+|------|---------|---------|
+| card_001 | "Bravo ! Bravo !! Blessed indeed are you Queen Sita." | "शाबाश ! सीतामाई आप धन्य हो." |
+| card_002 | "Verily, verily is King Rama extremely fortunate to have a wife like you." | "माताजी! श्रीरामचंद्र जी का अहो भाग्य हे. आप की जन्मी पत्नी उन को प्राप्त हुई!" |
+| card_003 | "I am Hanuman, a servant of Rama, come in search of you." | "माताजी मैं वंदन करता हूँ. यह रामदास हनुमान आप के शोधार्थ आया है." |
+| card_004 | "END OF PART ONE." | "प्रथम मण्डल समाप्त." |
+
+**Language note:** card_002's Marathi uses `अहो` (Marathi exclamation) and `हे` copula (Marathi; Hindi uses `है`) — consistent with Phalke writing for a Marathi-primary audience. card_003's Devanagari page uses Hindi inflections (`मैं`, `यह`, `आया है`), suggesting a Hindi–Marathi mixed register. S16 (intertitle redesign) should source Marathi typography expertise rather than treating all Devanagari as interchangeable Hindi.
+
+**Outputs for downstream stages:**
+- `ocr/canonical/intertitles.json` — structured trilingual JSON; `regenerated_path` fields in `intertitle_plan.json` remain null until S16 produces new masters.
+- `ocr/canonical/report.html` — static gallery for subjective review.
+
+**Revisit if:** more fragments surface with additional cards. The `ocr/run.py` pipeline runs EasyOCR automatically but its output is not reliable on this material — a new OCR pass would need a different engine (see OCR_JOURNAL.md D2 for candidates) or continued Claude vision verification.
+
+---
+
 ### Failures / dead ends
 
 - ffmpeg vidstab: discovered Homebrew's ffmpeg 8.0.1 isn't compiled with libvidstab. Resolved via D4 (Python vidstab package). Did not spend time tapping homebrew-ffmpeg — the Python package is strictly simpler.
