@@ -34,27 +34,51 @@ def find_s00_dir(run_dir: Path) -> Path:
     raise FileNotFoundError(f"No s00_* directory under {run_dir}")
 
 
-def detect_shots(frames_dir: Path, threshold: float, logger) -> list[int]:
-    """PySceneDetect on a frame sequence. Uses a virtual video from the sequence."""
+def detect_shots(frames_dir: Path, cfg, logger) -> list[int]:
+    """PySceneDetect on a frame sequence. Supports content, adaptive, or both
+    (union). Tuned low for silent-film soft cuts.
+    """
     from scenedetect import SceneManager, open_video
-    from scenedetect.detectors import ContentDetector
+    from scenedetect.detectors import AdaptiveDetector, ContentDetector
 
     frames = sorted(frames_dir.glob("*.png"))
     if not frames:
         return []
-    # PySceneDetect can open an image sequence via ffmpeg backend by pointing to
-    # the first frame with a pattern. Use the image-sequence path convention.
     digits = len(frames[0].stem)
     pattern = str(frames_dir / f"%0{digits}d.png")
-    video = open_video(pattern)
-    scene_manager = SceneManager()
-    scene_manager.add_detector(ContentDetector(threshold=threshold))
-    scene_manager.detect_scenes(video)
-    scenes = scene_manager.get_scene_list()
-    # Return frame indices at each boundary (start of each shot).
-    boundaries = [s[0].get_frames() for s in scenes]
-    logger.info("Detected %d shots (%d boundaries)", len(scenes), len(boundaries))
-    return boundaries
+
+    method = getattr(cfg, "method", "content")
+    threshold = getattr(cfg, "threshold", 27.0)
+    adaptive_threshold = getattr(cfg, "adaptive_threshold", 3.0)
+    min_scene_len = getattr(cfg, "min_scene_len", 15)
+
+    all_boundaries: set[int] = set()
+
+    def _run(detectors):
+        video = open_video(pattern)
+        mgr = SceneManager()
+        for det in detectors:
+            mgr.add_detector(det)
+        mgr.detect_scenes(video)
+        return [s[0].get_frames() for s in mgr.get_scene_list()]
+
+    if method in ("content", "content_plus_adaptive"):
+        b = _run([ContentDetector(threshold=threshold, min_scene_len=min_scene_len)])
+        logger.info("ContentDetector(threshold=%.1f): %d boundaries", threshold, len(b))
+        all_boundaries.update(b)
+    if method in ("adaptive", "content_plus_adaptive"):
+        b = _run([AdaptiveDetector(adaptive_threshold=adaptive_threshold, min_scene_len=min_scene_len)])
+        logger.info("AdaptiveDetector(threshold=%.2f): %d boundaries", adaptive_threshold, len(b))
+        all_boundaries.update(b)
+
+    boundaries = sorted(all_boundaries)
+    # Deduplicate close pairs (within min_scene_len frames — keep the earlier).
+    dedup = []
+    for b in boundaries:
+        if not dedup or b - dedup[-1] >= min_scene_len:
+            dedup.append(b)
+    logger.info("Merged union → %d unique shot boundaries (method=%s)", len(dedup), method)
+    return dedup
 
 
 def laplacian_variance(img_gray: np.ndarray) -> float:
@@ -203,7 +227,7 @@ def main(cfg_path: str, run_dir: str | None) -> None:
         b.frames_processed = len(frames)
 
         logger.info("Running shot detection...")
-        shots = detect_shots(frames_dir, cfg.s01_probe.shot_detection.threshold, logger)
+        shots = detect_shots(frames_dir, cfg.s01_probe.shot_detection, logger)
 
         logger.info("Running damage heuristics...")
         damage = compute_damage(frames, logger)

@@ -1,6 +1,8 @@
 profile_name: modern_smooth
 
 source:
+  # Source stays pristine. S00 applies the start-time offset at frame-extraction
+  # time via ffmpeg -ss (no re-encode). See s00_ingest.source_start_time_s.
   path: source/lanka_dahan_1917.webm
   sha256: null  # filled by S00 on first run
 
@@ -12,11 +14,20 @@ s00_ingest:
   output_format: png
   preserve_audio: false
   parallel_workers: 4
+  # Skip the 3.000s of pure-black leader + dim fade-in.
+  # Frame 75 of the original is the first frame of real content (see JOURNAL).
+  source_start_time_s: 3.0
 
 s01_probe:
   shot_detection:
-    method: pyscenedetect
-    threshold: 27.0
+    # content_plus_adaptive = union of ContentDetector + AdaptiveDetector.
+    # Silent-era hand-cut splices often slip past ContentDetector alone; the
+    # AdaptiveDetector catches gradual/soft cuts. Threshold lowered from 27→15
+    # per cuts seen in the full-source S02 pass 1 review (JOURNAL D13).
+    method: content_plus_adaptive
+    threshold: 15.0
+    adaptive_threshold: 3.0
+    min_scene_len: 10
   damage_heuristics:
     laplacian_blur_threshold: 100.0
     dark_frame_threshold: 0.02

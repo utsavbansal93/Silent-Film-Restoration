@@ -24,11 +24,19 @@ class S00Cfg(BaseModel):
     output_format: Literal["png", "tiff"] = "png"
     preserve_audio: bool = False
     parallel_workers: int = Field(default=1, ge=1, le=16)
+    # Offset in seconds into the source file. ffmpeg -ss is applied at
+    # extraction time so no re-encode is needed; source stays pristine.
+    source_start_time_s: float = Field(default=0.0, ge=0.0)
 
 
 class ShotDetectionCfg(BaseModel):
-    method: Literal["pyscenedetect"] = "pyscenedetect"
-    threshold: float = 27.0
+    # content      → ContentDetector only (fast, misses gradual cuts)
+    # adaptive     → AdaptiveDetector only (good for gradual cuts)
+    # content_plus_adaptive → union of both detectors (most coverage; default for silent film)
+    method: Literal["content", "adaptive", "content_plus_adaptive"] = "content_plus_adaptive"
+    threshold: float = 15.0                  # ContentDetector threshold; 27 is default, 15 catches subtler cuts
+    adaptive_threshold: float = 3.0          # AdaptiveDetector threshold
+    min_scene_len: int = 10                  # minimum frames between detected cuts (prevents duplicates)
 
 
 class DamageHeuristicsCfg(BaseModel):

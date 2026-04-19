@@ -149,22 +149,29 @@ def stabilise_shot_phase_corr(
     return count
 
 
-def frame_to_frame_translation_rms(frame_paths: list[Path], upsample: int = 10) -> float:
-    """Metric: RMS of per-pair sub-pixel translation magnitudes via the SAME
-    skimage phase_cross_correlation used by the stabiliser. This keeps pre/post
-    measurement consistent with the algorithm, so any reduction is attributable
-    to the algorithm rather than a metric/method mismatch.
+def frame_to_frame_translation_rms(
+    frame_paths: list[Path], upsample: int = 10, metric_size: tuple[int, int] = (640, 360),
+) -> float:
+    """Metric: RMS of per-pair sub-pixel translation magnitudes via skimage
+    phase_cross_correlation. Frames are downsampled to `metric_size` before the
+    FFT — ~9× faster than full-res with negligible precision loss since upsampling
+    resolves the peak in a small neighbourhood regardless of source size. The
+    reported shift is *in downsampled pixels*; pre and post are measured on the
+    same grid so the comparison is apples-to-apples.
     """
     if len(frame_paths) < 2:
         return 0.0
+    w, h = metric_size
     prev = cv2.imread(str(frame_paths[0]), cv2.IMREAD_GRAYSCALE)
     if prev is None:
         return 0.0
+    prev = cv2.resize(prev, (w, h))
     mags = []
     for p in frame_paths[1:]:
         cur = cv2.imread(str(p), cv2.IMREAD_GRAYSCALE)
         if cur is None:
             continue
+        cur = cv2.resize(cur, (w, h))
         shift, _, _ = phase_cross_correlation(
             prev, cur, upsample_factor=upsample, normalization=None,
         )

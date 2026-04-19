@@ -48,7 +48,8 @@ def probe_source(src: Path) -> dict:
 
 def _extract_range(args: tuple) -> tuple[int, int]:
     src, out_dir, start_s, duration_s, first_idx, total_digits = args
-    # Use -start_number so each worker's output joins into a single 00000001.png sequence.
+    # -ss *before* -i is fast-seek; accurate enough for PNG frame extraction
+    # (individual frames are decoded exactly).
     pattern = str(Path(out_dir) / f"%0{total_digits}d.png")
     cmd = [
         "ffmpeg",
@@ -79,7 +80,9 @@ def _extract_range(args: tuple) -> tuple[int, int]:
     return (first_idx, produced)
 
 
-def extract_serial(src: Path, out_dir: Path, total_frames: int) -> int:
+def extract_serial(
+    src: Path, out_dir: Path, total_frames: int, source_start_s: float = 0.0,
+) -> int:
     digits = max(8, len(str(total_frames)))
     pattern = str(out_dir / f"%0{digits}d.png")
     cmd = [
@@ -87,15 +90,15 @@ def extract_serial(src: Path, out_dir: Path, total_frames: int) -> int:
         "-hide_banner",
         "-loglevel",
         "error",
-        "-i",
-        str(src),
-        "-start_number",
-        "1",
-        "-vsync",
-        "0",
+    ]
+    if source_start_s > 0:
+        cmd += ["-ss", f"{source_start_s}"]
+    cmd += [
+        "-i", str(src),
+        "-start_number", "1",
+        "-vsync", "0",
         "-an",
-        "-vcodec",
-        "png",
+        "-vcodec", "png",
         pattern,
     ]
     subprocess.run(cmd, check=True)
@@ -109,17 +112,19 @@ def extract_parallel(
     duration_s: float,
     fps: float,
     workers: int,
+    source_start_s: float = 0.0,
 ) -> int:
     """Split source by time, extract each slice in a subprocess. Frame numbering
     is kept contiguous by giving each worker its own start_number."""
     digits = max(8, len(str(total_frames)))
-    # Split by time so frame counts per worker are roughly balanced.
-    slice_s = duration_s / workers
+    effective_duration = max(0.0, duration_s - source_start_s)
+    slice_s = effective_duration / workers
     tasks = []
     for i in range(workers):
-        start = i * slice_s
-        dur = slice_s if i < workers - 1 else (duration_s - start + 0.5)
-        first_idx = int(round(start * fps)) + 1
+        start = source_start_s + i * slice_s
+        dur = slice_s if i < workers - 1 else (effective_duration - i * slice_s + 0.5)
+        # Frame numbering restarts from 1 for the clipped output.
+        first_idx = int(round((i * slice_s) * fps)) + 1
         tasks.append((str(src), str(out_dir), start, dur, first_idx, digits))
 
     with ProcessPoolExecutor(max_workers=workers) as pool:
@@ -194,10 +199,26 @@ def main(cfg_path: str, run_dir: str | None) -> None:
     meta = probe_source(src)
     meta["source_path"] = str(src.relative_to(project_root()))
     meta["source_sha256"] = src_hash
-    logger.info(
-        "Source: %dx%d, %.2fs, %.3f fps, ~%d frames",
-        meta["width"], meta["height"], meta["duration_s"], meta["declared_fps"], meta["nb_frames"],
-    )
+
+    source_start_s = cfg.s00_ingest.source_start_time_s
+    if source_start_s > 0:
+        effective_duration = max(0.0, meta["duration_s"] - source_start_s)
+        effective_frames = int(round(effective_duration * meta["declared_fps"]))
+        meta["source_start_time_s"] = source_start_s
+        meta["effective_duration_s"] = effective_duration
+        meta["nb_frames_original"] = meta["nb_frames"]
+        meta["nb_frames"] = effective_frames
+        logger.info(
+            "Source: %dx%d, %.2fs (offset %.3fs → %.2fs effective, %d frames), %.3f fps",
+            meta["width"], meta["height"], meta["duration_s"],
+            source_start_s, effective_duration, effective_frames, meta["declared_fps"],
+        )
+    else:
+        logger.info(
+            "Source: %dx%d, %.2fs, %.3f fps, ~%d frames",
+            meta["width"], meta["height"], meta["duration_s"],
+            meta["declared_fps"], meta["nb_frames"],
+        )
 
     with bench_run(f"{STAGE_ID}_{STAGE_NAME}", cfg.section_hash("s00"), out_dir) as b:
         b.input_hash = src_hash
@@ -212,13 +233,17 @@ def main(cfg_path: str, run_dir: str | None) -> None:
             for p in existing:
                 p.unlink()
             if workers <= 1:
-                logger.info("Extracting serially...")
-                n = extract_serial(src, frames_dir, meta["nb_frames"])
+                logger.info("Extracting serially (offset=%.3fs)...", source_start_s)
+                n = extract_serial(
+                    src, frames_dir, meta["nb_frames"], source_start_s=source_start_s,
+                )
             else:
-                logger.info("Extracting with %d parallel workers...", workers)
+                logger.info("Extracting with %d parallel workers (offset=%.3fs)...",
+                            workers, source_start_s)
                 n = extract_parallel(
                     src, frames_dir, meta["nb_frames"],
                     meta["duration_s"], meta["declared_fps"], workers,
+                    source_start_s=source_start_s,
                 )
         b.frames_processed = n
         meta["frames_extracted"] = n

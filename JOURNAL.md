@@ -153,6 +153,38 @@ The `opencv_features` method is kept in the config enum as a placeholder/lesson 
 
 *(The moral, in case future-me forgets: listen to the person who has spent a lifetime around old film. The vocabulary they use — "wobble," "shimmer," "jitter," "weave" — is diagnostic. Camera shake and film weave look similar on first glance and need completely different tools. Utsav named the problem and the solution in one message.)*
 
+### D13 — Exact leader trim via source_start_time_s (no re-encode)
+
+Found the exact content-start frame by scanning inter-frame MAD in the first 6 s of source. Frame 75 at exactly 3.000 s jumps MAD 4.22 → 27.37 (~6× neighbours) — that's the literal first frame of the movie. All earlier frames are either black leader (0–24) or a slow dim fade-in (25–74).
+
+First attempt physically re-encoded the source (VP9 CRF 15 for archival) — took ~5 min. Wrong move: we extract PNG frames from it next anyway, so the re-encode was pure waste. Replaced with a config flag `s00_ingest.source_start_time_s: 3.0` that passes `-ss 3.0` to ffmpeg at frame extraction time. Frame-exact (PNG decode, not keyframe-limited), sub-second overhead, source file stays pristine.
+
+### D14 — Shot detection: ContentDetector threshold 27 is wrong for silent film
+
+Ran the full pipeline with the brief's default (PySceneDetect `ContentDetector`, threshold 27). It found **25 shots across 5:12** of runtime. Utsav spotted at least one obvious cut that wasn't flagged at ~4:30; inspection of S01's own `motion_magnitude` array showed ~7 clear motion-spike candidates inside the detector's biggest "shot 25" alone — so 25 was a significant under-count.
+
+Silent-era hand-cut splices often lack the sharp content change that `ContentDetector` keys off. Fix:
+
+1. Swap default to `content_plus_adaptive` — union of `ContentDetector(threshold=15)` and `AdaptiveDetector(adaptive_threshold=3)`.
+2. Add `min_scene_len` dedup to merge near-duplicates between the two detectors.
+3. New script `scripts/redetect_shots.py` re-runs shot detection alone on an existing run, reusing the cached EAST intertitle detection (which is 15 min of compute) and damage/optical-flow arrays. Saves us a full S01 re-run.
+
+Result: 25 shots → **66 shots** on the full source. Shot 25 got correctly broken into multiple sub-shots. Residual under-detection remains on the final 87-s "shot 66" (5 additional motion spikes there weren't caught even at threshold 15 — likely genuinely-uncut action, or content-change still too gradual for these detectors). Noted; not blocking.
+
+### D15 — Shake metric must respect shot boundaries
+
+After the re-detected 66-shot S02 rerun, the full-file shake metric reported a measly **0.2% reduction** despite the stabiliser visibly working. Cause: `frame_to_frame_translation_rms` measures every consecutive pair across the whole 7,821-frame sequence, including the 65 *inter-shot cuts*. Each cut is a ~20–100 px frame-to-frame displacement; 65 cuts dominate the RMS by an order of magnitude and drown the sub-pixel weave signal the algorithm actually targets.
+
+Two separate remediations:
+1. **Metric speed** — downsample frames to 640×360 before `phase_cross_correlation` (the `upsample_factor=10` still resolves sub-pixel). ~9× faster; pre+post on 7,821 frames drops from ~45 min to ~7 min.
+2. **Interpretation** — measure *per shot* for truth, full-file only as a sanity check. Sampled 4 random shots post-fix: reductions 27.5%, 71.5%, 80.1%, and 5.7% (shot 66 with its residual internal cuts). **Mean ~46%.** Weave removal is genuinely working; the headline number simply was a measurement bug.
+
+Full-file rerun with the faster metric still reports 0.2% because the cross-cut contamination is structural, not a sampling artefact. The canonical truthful number going forward is per-shot-averaged RMS reduction.
+
+### D16 — S00 parallel extraction can drop a worker-boundary frame
+
+The full-source run was missing exactly frame `00005866` — one frame at a parallel-worker time boundary. `extract_parallel` splits source time evenly across workers; due to `round()` at the split point, neighbouring workers can both skip the exact same frame. Patched by re-extracting that one frame at `-ss 237.6s` into the original. Longer-term fix (follow-up): extend S00's auto-QC to verify contiguous frame indices and auto-patch gaps from source.
+
 ### Failures / dead ends
 
 - ffmpeg vidstab: discovered Homebrew's ffmpeg 8.0.1 isn't compiled with libvidstab. Resolved via D4 (Python vidstab package). Did not spend time tapping homebrew-ffmpeg — the Python package is strictly simpler.

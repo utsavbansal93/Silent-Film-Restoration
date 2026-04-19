@@ -15,8 +15,10 @@ s00_ingest:
 
 s01_probe:
   shot_detection:
-    method: pyscenedetect
-    threshold: 27.0
+    method: content_plus_adaptive
+    threshold: 15.0
+    adaptive_threshold: 3.0
+    min_scene_len: 10
   damage_heuristics:
     laplacian_blur_threshold: 100.0
     dark_frame_threshold: 0.02

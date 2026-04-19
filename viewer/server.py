@@ -78,6 +78,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     _STAGE_LABELS = {
         "s00_ingest": "S00 — Raw (ingested)",
         "s02_stabilise": "S02 — Stabilised (weave-removed)",
+        "s02a_default": "S02a — Default (smooth=25, upsample=10)",
+        "s02b_wide": "S02b — Wider smoothing (smooth=75, upsample=10)",
+        "s02c_fine": "S02c — Finer sub-pixel (smooth=25, upsample=50)",
+        "s02d_ffmpeg": "S02d — ffmpeg deshake (block matching)",
+        "s02e_median": "S02e — Default + temporal-median second pass (stacked)",
         "s03_deflicker": "S03 — Deflickered",
         "s05_dirt_remove": "S05 — Dirt removed",
         "s08_denoise": "S08 — Denoised",
